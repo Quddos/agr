@@ -3,7 +3,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
+import { motion } from "framer-motion";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Select } from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
 
+const AI_THRESHOLD = 75;
 const emptyCrop = {
   name: "",
   category: "",
@@ -12,10 +20,21 @@ const emptyCrop = {
   notes: "",
   imageUrl: "",
   detectionLabel: "",
-  detectionConfidence: "",
+  detectionRawLabel: "",
+  detectionConfidence: 0,
+  detectionStatus: "unreviewed",
 };
 const emptyStatement = { type: "income", amount: "", note: "", date: "", crop: "" };
 const emptyUser = { name: "", email: "", password: "", role: "staff" };
+
+const cropMap = [
+  { keywords: ["corn", "maize"], label: "Maize" },
+  { keywords: ["wheat"], label: "Wheat" },
+  { keywords: ["tomato"], label: "Tomato" },
+  { keywords: ["banana"], label: "Banana" },
+  { keywords: ["potato"], label: "Potato" },
+  { keywords: ["rice"], label: "Rice" },
+];
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -41,38 +60,19 @@ export default function DashboardPage() {
   const canCreateUsers = user?.role === "admin";
 
   const filteredCrops = useMemo(
-    () =>
-      crops.filter((item) =>
-        `${item.name} ${item.category} ${item.notes}`.toLowerCase().includes(cropQuery.toLowerCase())
-      ),
+    () => crops.filter((item) => `${item.name} ${item.category} ${item.notes}`.toLowerCase().includes(cropQuery.toLowerCase())),
     [crops, cropQuery]
   );
-
   const filteredStatements = useMemo(
-    () =>
-      statements.filter((item) =>
-        statementTypeFilter === "all" ? true : item.type === statementTypeFilter
-      ),
+    () => statements.filter((item) => (statementTypeFilter === "all" ? true : item.type === statementTypeFilter)),
     [statements, statementTypeFilter]
   );
-
-  const cropInventoryValue = useMemo(
-    () => crops.reduce((acc, item) => acc + item.quantity * item.unitPrice, 0),
-    [crops]
-  );
-
+  const cropInventoryValue = useMemo(() => crops.reduce((acc, item) => acc + item.quantity * item.unitPrice, 0), [crops]);
   const lowStockCrops = useMemo(() => crops.filter((crop) => Number(crop.quantity) < 100), [crops]);
-
-  const topCrop = useMemo(() => {
-    if (crops.length === 0) return null;
-    return [...crops].sort((a, b) => b.quantity * b.unitPrice - a.quantity * a.unitPrice)[0];
-  }, [crops]);
+  const pendingReviewCrops = useMemo(() => crops.filter((crop) => crop.detectionStatus === "needs_review"), [crops]);
 
   const apiRequest = useCallback(async (url, options = {}) => {
-    const res = await fetch(url, {
-      ...options,
-      headers: { "Content-Type": "application/json", ...(options.headers || {}) },
-    });
+    const res = await fetch(url, { ...options, headers: { "Content-Type": "application/json", ...(options.headers || {}) } });
     const data = await res.json();
     if (!res.ok) throw new Error(data.message || "Request failed.");
     return data;
@@ -83,16 +83,12 @@ export default function DashboardPage() {
       if (!res.ok) throw new Error("Unauthorized");
       return res.json();
     });
-
-    const nextUser = currentUser.user;
-    setUser(nextUser);
+    setUser(currentUser.user);
 
     const requests = [fetch("/api/crops").then((r) => r.json()), fetch("/api/statements").then((r) => r.json())];
-    if (nextUser.role === "admin" || nextUser.role === "manager") {
-      requests.push(fetch("/api/users").then((r) => r.json()));
-    }
-
+    if (currentUser.user.role === "admin" || currentUser.user.role === "manager") requests.push(fetch("/api/users").then((r) => r.json()));
     const [cropRes, statementRes, userRes] = await Promise.all(requests);
+
     setCrops(cropRes.data || []);
     setStatements(statementRes.data || []);
     setSummary(statementRes.summary || { income: 0, expense: 0, net: 0 });
@@ -100,9 +96,7 @@ export default function DashboardPage() {
   }, []);
 
   useEffect(() => {
-    queueMicrotask(() => {
-      refreshData().catch(() => router.push("/auth"));
-    });
+    queueMicrotask(() => refreshData().catch(() => router.push("/auth")));
   }, [refreshData, router]);
 
   async function runAction(fn) {
@@ -116,6 +110,63 @@ export default function DashboardPage() {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function loadDetectionModel() {
+    if (modelRef.current) return modelRef.current;
+    const mobilenet = await import("@tensorflow-models/mobilenet");
+    await import("@tensorflow/tfjs");
+    modelRef.current = await mobilenet.load();
+    return modelRef.current;
+  }
+
+  function mapCropLabel(rawLabel) {
+    const lower = rawLabel.toLowerCase();
+    const mapped = cropMap.find((item) => item.keywords.some((keyword) => lower.includes(keyword)));
+    return mapped ? mapped.label : "Unknown crop class";
+  }
+
+  async function detectCrop(setTarget, imageUrl) {
+    if (!imageUrl) return setErrorMessage("Upload image before AI detection.");
+    setBusy(true);
+    setErrorMessage("");
+    try {
+      const model = await loadDetectionModel();
+      const img = document.createElement("img");
+      img.src = imageUrl;
+      await new Promise((resolve, reject) => {
+        img.onload = resolve;
+        img.onerror = reject;
+      });
+      const predictions = await model.classify(img);
+      const best = predictions?.[0];
+      if (!best) throw new Error("No prediction generated.");
+      const confidence = Number((best.probability * 100).toFixed(2));
+      const mappedLabel = mapCropLabel(best.className);
+      const status = confidence >= AI_THRESHOLD && mappedLabel !== "Unknown crop class" ? "accepted" : "needs_review";
+      setTarget((prev) => ({
+        ...prev,
+        detectionLabel: mappedLabel,
+        detectionRawLabel: best.className,
+        detectionConfidence: confidence,
+        detectionStatus: status,
+        notes: prev.notes
+          ? `${prev.notes}\nAI: ${mappedLabel} (${confidence}%)`
+          : `AI: ${mappedLabel} (${confidence}%)`,
+      }));
+    } catch {
+      setErrorMessage("AI detection failed. Try another image.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleImagePick(event, setTarget) {
+    const file = event.target.files?.[0];
+    if (!file || !file.type.startsWith("image/")) return;
+    const reader = new FileReader();
+    reader.onload = () => setTarget((prev) => ({ ...prev, imageUrl: String(reader.result || "") }));
+    reader.readAsDataURL(file);
   }
 
   async function handleAddCrop(e) {
@@ -136,17 +187,20 @@ export default function DashboardPage() {
   }
 
   async function handleDeleteCrop(id) {
-    if (!confirm("Delete this crop record?")) return;
+    if (!confirm("Delete this crop?")) return;
     await runAction(() => apiRequest(`/api/crops/${id}`, { method: "DELETE" }));
+  }
+
+  async function markCropReview(id, status) {
+    const crop = crops.find((item) => item._id === id);
+    if (!crop) return;
+    await runAction(() => apiRequest(`/api/crops/${id}`, { method: "PUT", body: JSON.stringify({ ...crop, detectionStatus: status }) }));
   }
 
   async function handleAddStatement(e) {
     e.preventDefault();
     await runAction(async () => {
-      await apiRequest("/api/statements", {
-        method: "POST",
-        body: JSON.stringify({ ...statementForm, crop: statementForm.crop || null }),
-      });
+      await apiRequest("/api/statements", { method: "POST", body: JSON.stringify({ ...statementForm, crop: statementForm.crop || null }) });
       setStatementForm(emptyStatement);
     });
   }
@@ -155,16 +209,13 @@ export default function DashboardPage() {
     e.preventDefault();
     if (!editingStatement?._id) return;
     await runAction(async () => {
-      await apiRequest(`/api/statements/${editingStatement._id}`, {
-        method: "PUT",
-        body: JSON.stringify(editingStatement),
-      });
+      await apiRequest(`/api/statements/${editingStatement._id}`, { method: "PUT", body: JSON.stringify(editingStatement) });
       setEditingStatement(null);
     });
   }
 
   async function handleDeleteStatement(id) {
-    if (!confirm("Delete this statement record?")) return;
+    if (!confirm("Delete this statement?")) return;
     await runAction(() => apiRequest(`/api/statements/${id}`, { method: "DELETE" }));
   }
 
@@ -180,305 +231,174 @@ export default function DashboardPage() {
     });
   }
 
+  function exportStatementsCsv() {
+    if (filteredStatements.length === 0) return;
+    const rows = [
+      ["Type", "Amount", "Date", "Crop", "Note"],
+      ...filteredStatements.map((item) => [item.type, item.amount, formatDateValue(item.date), item.crop?.name || "", (item.note || "").replaceAll(",", ";")]),
+    ];
+    const csv = rows.map((row) => row.join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "statements.csv";
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
   async function logout() {
     await fetch("/api/auth/logout", { method: "POST" });
     router.push("/auth");
   }
 
-  async function handleImagePick(event, setTarget) {
-    const file = event.target.files?.[0];
-    if (!file || !file.type.startsWith("image/")) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      setTarget((prev) => ({ ...prev, imageUrl: String(reader.result || "") }));
-    };
-    reader.readAsDataURL(file);
-  }
-
-  async function loadDetectionModel() {
-    if (modelRef.current) return modelRef.current;
-    const mobilenet = await import("@tensorflow-models/mobilenet");
-    await import("@tensorflow/tfjs");
-    modelRef.current = await mobilenet.load();
-    return modelRef.current;
-  }
-
-  async function detectCrop(setTarget, imageUrl) {
-    if (!imageUrl) {
-      setErrorMessage("Upload or capture an image before detection.");
-      return;
-    }
-
-    setBusy(true);
-    setErrorMessage("");
-    try {
-      const model = await loadDetectionModel();
-      const img = document.createElement("img");
-      img.src = imageUrl;
-      await new Promise((resolve, reject) => {
-        img.onload = resolve;
-        img.onerror = reject;
-      });
-
-      const predictions = await model.classify(img);
-      const best = predictions?.[0];
-      if (!best) throw new Error("No prediction available for this image.");
-
-      const label = best.className;
-      const confidence = (best.probability * 100).toFixed(2);
-      setTarget((prev) => ({
-        ...prev,
-        detectionLabel: label,
-        detectionConfidence: confidence,
-        notes: prev.notes
-          ? `${prev.notes}\nAI Hint: ${label} (${confidence}%)`
-          : `AI Hint: ${label} (${confidence}%)`,
-      }));
-    } catch {
-      setErrorMessage("Crop detection failed. Please try with a clearer image.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  function exportStatementsCsv() {
-    if (filteredStatements.length === 0) return;
-    const header = ["Type", "Amount", "Date", "Crop", "Note"];
-    const rows = filteredStatements.map((item) => [
-      item.type,
-      item.amount,
-      formatDateValue(item.date),
-      item.crop?.name || "",
-      (item.note || "").replaceAll(",", ";"),
-    ]);
-    const csv = [header, ...rows].map((line) => line.join(",")).join("\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = "statements-export.csv";
-    link.click();
-    URL.revokeObjectURL(url);
-  }
-
   if (!user) return <main className="p-6 text-center text-zinc-600">Loading dashboard...</main>;
 
   return (
-    <main className="mx-auto w-full max-w-7xl p-4 sm:p-6 lg:p-8">
-      <header className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-2xl bg-white p-4 shadow">
+    <main className="mx-auto w-full max-w-7xl space-y-6 p-4 sm:p-6 lg:p-8">
+      <motion.header initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Agric Management Dashboard</h1>
-          <p className="text-sm text-zinc-600">
-            Signed in as {user.name} ({user.role})
-          </p>
+          <h1 className="text-2xl font-bold">Agric Dashboard</h1>
+          <p className="text-sm text-zinc-600">{user.name} ({user.role})</p>
         </div>
         <div className="flex gap-2">
-          <button className="rounded-md border border-zinc-300 px-4 py-2 text-sm" onClick={exportStatementsCsv}>
-            Export Statements CSV
-          </button>
-          <button className="rounded-md bg-zinc-900 px-4 py-2 text-white" onClick={logout}>
-            Logout
-          </button>
+          <Button variant="outline" onClick={exportStatementsCsv}>Export CSV</Button>
+          <Button variant="outline" onClick={logout}>Logout</Button>
         </div>
-      </header>
+      </motion.header>
 
-      {errorMessage ? <p className="mb-4 rounded-md bg-red-50 p-3 text-sm text-red-700">{errorMessage}</p> : null}
+      {errorMessage ? <p className="rounded-md bg-red-50 p-3 text-sm text-red-700">{errorMessage}</p> : null}
 
-      <section className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <MetricCard label="Total Crops" value={crops.length} />
         <MetricCard label="Inventory Value" value={`$${cropInventoryValue.toFixed(2)}`} />
         <MetricCard label="Income" value={`$${summary.income.toFixed(2)}`} />
         <MetricCard label="Net Balance" value={`$${summary.net.toFixed(2)}`} />
       </section>
 
-      <section className="mb-6 grid gap-4 lg:grid-cols-3">
-        <Card title="Low Stock Alerts">
-          {lowStockCrops.length === 0 ? (
-            <p className="text-sm text-zinc-600">No low-stock alerts.</p>
-          ) : (
-            <ul className="space-y-2">
-              {lowStockCrops.map((crop) => (
-                <li key={crop._id} className="rounded-md bg-amber-50 p-2 text-sm text-amber-800">
-                  {crop.name}: {crop.quantity} remaining units
-                </li>
-              ))}
-            </ul>
-          )}
-        </Card>
-        <Card title="Top Value Crop">
-          {topCrop ? (
-            <div className="text-sm text-zinc-700">
-              <p className="text-lg font-semibold">{topCrop.name}</p>
-              <p>Estimated stock value: ${(topCrop.quantity * topCrop.unitPrice).toFixed(2)}</p>
-            </div>
-          ) : (
-            <p className="text-sm text-zinc-600">No crop records yet.</p>
-          )}
-        </Card>
-        <Card title="Quick Health Check">
-          <p className="text-sm text-zinc-700">
-            Backend health endpoint available at <code>/api/health</code>.
-          </p>
-          <p className="mt-2 text-xs text-zinc-500">Use this endpoint for uptime monitoring on deployment.</p>
-        </Card>
+      <section className="grid gap-4 lg:grid-cols-3">
+        <Card><CardHeader><CardTitle>Low Stock Alerts</CardTitle></CardHeader><CardContent>{lowStockCrops.length ? lowStockCrops.map((crop) => <p key={crop._id} className="text-sm text-amber-700">{crop.name}: {crop.quantity} units</p>) : <p className="text-sm text-zinc-600">No low-stock records.</p>}</CardContent></Card>
+        <Card><CardHeader><CardTitle>AI Review Queue</CardTitle></CardHeader><CardContent>{pendingReviewCrops.length ? pendingReviewCrops.map((crop) => <div key={crop._id} className="mb-2 rounded-md bg-amber-50 p-2 text-sm"><p className="font-medium">{crop.name}</p><p className="text-zinc-600">{crop.detectionLabel || crop.detectionRawLabel} ({crop.detectionConfidence || 0}%)</p><div className="mt-2 flex gap-2"><Button size="sm" onClick={() => markCropReview(crop._id, "accepted")}>Accept</Button><Button size="sm" variant="outline" onClick={() => markCropReview(crop._id, "needs_review")}>Keep Review</Button></div></div>) : <p className="text-sm text-zinc-600">No pending review items.</p>}</CardContent></Card>
+        <Card><CardHeader><CardTitle>Health</CardTitle></CardHeader><CardContent><p className="text-sm text-zinc-600">Deployment monitor endpoint: <code>/api/health</code></p></CardContent></Card>
       </section>
 
       <section className="grid gap-6 lg:grid-cols-2">
-        <Card title="Crop CRUD + Phase 2 AI Detection">
-          <form className="mb-4 grid gap-3" onSubmit={handleAddCrop}>
-            <input className="input" placeholder="Crop name" value={cropForm.name} onChange={(e) => setCropForm({ ...cropForm, name: e.target.value })} required />
-            <input className="input" placeholder="Category" value={cropForm.category} onChange={(e) => setCropForm({ ...cropForm, category: e.target.value })} />
-            <div className="grid grid-cols-2 gap-3">
-              <input className="input" type="number" min="0" placeholder="Quantity" value={cropForm.quantity} onChange={(e) => setCropForm({ ...cropForm, quantity: e.target.value })} required />
-              <input className="input" type="number" min="0" placeholder="Unit price" value={cropForm.unitPrice} onChange={(e) => setCropForm({ ...cropForm, unitPrice: e.target.value })} required />
-            </div>
-            <textarea className="input min-h-20" placeholder="Notes" value={cropForm.notes} onChange={(e) => setCropForm({ ...cropForm, notes: e.target.value })} />
-            <label className="text-sm text-zinc-600">Capture or upload crop image</label>
-            <input className="input" type="file" accept="image/*" capture="environment" onChange={(e) => handleImagePick(e, setCropForm)} />
-            {cropForm.imageUrl ? (
-              <Image src={cropForm.imageUrl} alt="Crop preview" width={96} height={96} unoptimized className="h-24 w-24 rounded-lg object-cover" />
-            ) : null}
-            <button
-              className="rounded-md border border-indigo-300 px-4 py-2 text-indigo-700"
-              type="button"
-              onClick={() => detectCrop(setCropForm, cropForm.imageUrl)}
-              disabled={busy}
-            >
-              Detect Crop (AI)
-            </button>
-            {cropForm.detectionLabel ? (
-              <p className="text-sm text-indigo-700">
-                AI Hint: {cropForm.detectionLabel} ({cropForm.detectionConfidence}%)
-              </p>
-            ) : null}
-            <button className="rounded-md bg-emerald-700 px-4 py-2 font-semibold text-white" disabled={busy}>
-              Add Crop
-            </button>
-          </form>
+        <Card>
+          <CardHeader><CardTitle>Crop CRUD + AI Detection</CardTitle></CardHeader>
+          <CardContent className="space-y-3">
+            <form className="space-y-3" onSubmit={handleAddCrop}>
+              <Input placeholder="Crop name" value={cropForm.name} onChange={(e) => setCropForm({ ...cropForm, name: e.target.value })} required />
+              <Input placeholder="Category" value={cropForm.category} onChange={(e) => setCropForm({ ...cropForm, category: e.target.value })} />
+              <div className="grid grid-cols-2 gap-3">
+                <Input type="number" min="0" placeholder="Quantity" value={cropForm.quantity} onChange={(e) => setCropForm({ ...cropForm, quantity: e.target.value })} required />
+                <Input type="number" min="0" placeholder="Unit price" value={cropForm.unitPrice} onChange={(e) => setCropForm({ ...cropForm, unitPrice: e.target.value })} required />
+              </div>
+              <Textarea placeholder="Notes" value={cropForm.notes} onChange={(e) => setCropForm({ ...cropForm, notes: e.target.value })} />
+              <Input type="file" accept="image/*" capture="environment" onChange={(e) => handleImagePick(e, setCropForm)} />
+              {cropForm.imageUrl ? <Image src={cropForm.imageUrl} alt="Crop preview" width={96} height={96} unoptimized className="rounded-lg object-cover" /> : null}
+              <div className="flex gap-2">
+                <Button type="button" variant="outline" onClick={() => detectCrop(setCropForm, cropForm.imageUrl)} disabled={busy}>Detect Crop (Phase 2.1)</Button>
+                <Button type="submit" disabled={busy}>Add Crop</Button>
+              </div>
+              {cropForm.detectionLabel ? (
+                <div className="text-sm">
+                  <Badge>{cropForm.detectionStatus}</Badge>
+                  <p className="mt-1 text-zinc-700">Mapped: {cropForm.detectionLabel} | Raw: {cropForm.detectionRawLabel} | {cropForm.detectionConfidence}%</p>
+                </div>
+              ) : null}
+            </form>
 
-          <input className="input mb-3" placeholder="Search crops..." value={cropQuery} onChange={(e) => setCropQuery(e.target.value)} />
-          <div className="space-y-2">
-            {filteredCrops.map((item) => (
-              <div key={item._id} className="rounded-lg border border-zinc-200 p-3">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex gap-3">
-                    {item.imageUrl ? <Image src={item.imageUrl} alt={item.name} width={64} height={64} unoptimized className="h-16 w-16 rounded-md object-cover" /> : null}
+            <Input placeholder="Search crops..." value={cropQuery} onChange={(e) => setCropQuery(e.target.value)} />
+            <div className="space-y-2">
+              {filteredCrops.map((item) => (
+                <div key={item._id} className="flex items-start justify-between rounded-md border border-zinc-200 p-2">
+                  <div className="flex items-center gap-2">
+                    {item.imageUrl ? <Image src={item.imageUrl} alt={item.name} width={52} height={52} unoptimized className="rounded-md object-cover" /> : null}
                     <div>
-                      <p className="font-semibold">{item.name}</p>
-                      <p className="text-sm text-zinc-600">
-                        {item.category || "General"} | Qty: {item.quantity} | ${item.unitPrice}
-                      </p>
+                      <p className="font-medium">{item.name}</p>
+                      <p className="text-xs text-zinc-600">{item.category} | Qty: {item.quantity} | ${item.unitPrice}</p>
+                      {item.detectionStatus ? <Badge className="mt-1">{item.detectionStatus}</Badge> : null}
                     </div>
                   </div>
                   <div className="flex gap-2">
-                    <button className="text-sm text-blue-700" onClick={() => setEditingCrop({ ...item })}>
-                      Edit
-                    </button>
-                    {canDelete ? (
-                      <button className="text-sm text-red-600" onClick={() => handleDeleteCrop(item._id)}>
-                        Delete
-                      </button>
-                    ) : null}
+                    <Button size="sm" variant="outline" onClick={() => setEditingCrop({ ...item })}>Edit</Button>
+                    {canDelete ? <Button size="sm" variant="danger" onClick={() => handleDeleteCrop(item._id)}>Delete</Button> : null}
                   </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          </CardContent>
         </Card>
 
-        <Card title="Statement Management">
-          <form className="mb-4 grid gap-3" onSubmit={handleAddStatement}>
-            <select className="input" value={statementForm.type} onChange={(e) => setStatementForm({ ...statementForm, type: e.target.value })}>
-              <option value="income">Income</option>
-              <option value="expense">Expense</option>
-            </select>
-            <input className="input" type="number" min="0" placeholder="Amount" value={statementForm.amount} onChange={(e) => setStatementForm({ ...statementForm, amount: e.target.value })} required />
-            <input className="input" type="date" value={statementForm.date} onChange={(e) => setStatementForm({ ...statementForm, date: e.target.value })} />
-            <select className="input" value={statementForm.crop} onChange={(e) => setStatementForm({ ...statementForm, crop: e.target.value })}>
-              <option value="">Select crop (optional)</option>
-              {crops.map((crop) => (
-                <option key={crop._id} value={crop._id}>
-                  {crop.name}
-                </option>
-              ))}
-            </select>
-            <textarea className="input min-h-20" placeholder="Note" value={statementForm.note} onChange={(e) => setStatementForm({ ...statementForm, note: e.target.value })} />
-            <button className="rounded-md bg-indigo-700 px-4 py-2 font-semibold text-white" disabled={busy}>
-              Add Statement
-            </button>
-          </form>
+        <Card>
+          <CardHeader><CardTitle>Statement Management</CardTitle></CardHeader>
+          <CardContent className="space-y-3">
+            <form className="space-y-3" onSubmit={handleAddStatement}>
+              <Select value={statementForm.type} onChange={(e) => setStatementForm({ ...statementForm, type: e.target.value })}><option value="income">Income</option><option value="expense">Expense</option></Select>
+              <Input type="number" min="0" placeholder="Amount" value={statementForm.amount} onChange={(e) => setStatementForm({ ...statementForm, amount: e.target.value })} required />
+              <Input type="date" value={statementForm.date} onChange={(e) => setStatementForm({ ...statementForm, date: e.target.value })} />
+              <Select value={statementForm.crop} onChange={(e) => setStatementForm({ ...statementForm, crop: e.target.value })}>
+                <option value="">Select crop (optional)</option>
+                {crops.map((crop) => <option key={crop._id} value={crop._id}>{crop.name}</option>)}
+              </Select>
+              <Textarea placeholder="Note" value={statementForm.note} onChange={(e) => setStatementForm({ ...statementForm, note: e.target.value })} />
+              <Button type="submit" disabled={busy}>Add Statement</Button>
+            </form>
 
-          <select className="input mb-3" value={statementTypeFilter} onChange={(e) => setStatementTypeFilter(e.target.value)}>
-            <option value="all">All types</option>
-            <option value="income">Income</option>
-            <option value="expense">Expense</option>
-          </select>
-
-          <div className="space-y-2">
+            <Select value={statementTypeFilter} onChange={(e) => setStatementTypeFilter(e.target.value)}>
+              <option value="all">All</option><option value="income">Income</option><option value="expense">Expense</option>
+            </Select>
             {filteredStatements.map((item) => (
-              <div key={item._id} className="flex items-start justify-between rounded-md border border-zinc-200 p-3">
+              <div key={item._id} className="flex items-start justify-between rounded-md border border-zinc-200 p-2">
                 <div>
-                  <p className={`font-semibold ${item.type === "income" ? "text-emerald-700" : "text-red-700"}`}>
-                    {item.type.toUpperCase()} - ${item.amount}
-                  </p>
-                  <p className="text-sm text-zinc-600">{item.note || "No note"}</p>
+                  <p className={`font-medium ${item.type === "income" ? "text-emerald-700" : "text-red-700"}`}>{item.type.toUpperCase()} - ${item.amount}</p>
+                  <p className="text-xs text-zinc-600">{item.note || "No note"}</p>
                 </div>
                 <div className="flex gap-2">
-                  <button className="text-sm text-blue-700" onClick={() => setEditingStatement({ ...item, crop: item.crop?._id || "" })}>
-                    Edit
-                  </button>
-                  {canDelete ? (
-                    <button className="text-sm text-red-600" onClick={() => handleDeleteStatement(item._id)}>
-                      Delete
-                    </button>
-                  ) : null}
+                  <Button size="sm" variant="outline" onClick={() => setEditingStatement({ ...item, crop: item.crop?._id || "" })}>Edit</Button>
+                  {canDelete ? <Button size="sm" variant="danger" onClick={() => handleDeleteStatement(item._id)}>Delete</Button> : null}
                 </div>
               </div>
             ))}
-          </div>
+          </CardContent>
         </Card>
       </section>
 
       {canManageUsers ? (
-        <section className="mt-6 grid gap-6 xl:grid-cols-2">
-          <Card title="Role Management">
-            <div className="space-y-2">
+        <section className="grid gap-6 xl:grid-cols-2">
+          <Card>
+            <CardHeader><CardTitle>Role Management</CardTitle></CardHeader>
+            <CardContent className="space-y-2">
               {users.map((member) => (
-                <div key={member._id} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-zinc-200 p-3">
-                  <div>
-                    <p className="font-semibold">{member.name}</p>
-                    <p className="text-sm text-zinc-600">{member.email}</p>
-                  </div>
+                <div key={member._id} className="flex items-center justify-between rounded-md border border-zinc-200 p-2">
+                  <div><p className="font-medium">{member.name}</p><p className="text-xs text-zinc-600">{member.email}</p></div>
                   <div className="flex items-center gap-2">
-                    <span className="rounded-full bg-zinc-100 px-3 py-1 text-sm">{member.role}</span>
+                    <Badge>{member.role}</Badge>
                     {canChangeRole ? (
-                      <select className="input w-auto" value={member.role} onChange={(e) => updateUserRole(member._id, e.target.value)}>
-                        <option value="admin">admin</option>
-                        <option value="manager">manager</option>
-                        <option value="staff">staff</option>
-                      </select>
+                      <Select className="w-28" value={member.role} onChange={(e) => updateUserRole(member._id, e.target.value)}>
+                        <option value="admin">admin</option><option value="manager">manager</option><option value="staff">staff</option>
+                      </Select>
                     ) : null}
                   </div>
                 </div>
               ))}
-            </div>
+            </CardContent>
           </Card>
 
           {canCreateUsers ? (
-            <Card title="Admin: Create User + Assign Role">
-              <form className="grid gap-3" onSubmit={handleCreateUser}>
-                <input className="input" placeholder="Full Name" value={userForm.name} onChange={(e) => setUserForm({ ...userForm, name: e.target.value })} required />
-                <input className="input" type="email" placeholder="Email" value={userForm.email} onChange={(e) => setUserForm({ ...userForm, email: e.target.value })} required />
-                <input className="input" type="password" placeholder="Temporary password" value={userForm.password} onChange={(e) => setUserForm({ ...userForm, password: e.target.value })} required />
-                <select className="input" value={userForm.role} onChange={(e) => setUserForm({ ...userForm, role: e.target.value })}>
-                  <option value="staff">staff</option>
-                  <option value="manager">manager</option>
-                  <option value="admin">admin</option>
-                </select>
-                <button className="rounded-md bg-emerald-700 px-4 py-2 font-semibold text-white" disabled={busy}>
-                  Create User
-                </button>
-              </form>
+            <Card>
+              <CardHeader><CardTitle>Create User (Admin)</CardTitle></CardHeader>
+              <CardContent>
+                <form className="space-y-3" onSubmit={handleCreateUser}>
+                  <Input placeholder="Name" value={userForm.name} onChange={(e) => setUserForm({ ...userForm, name: e.target.value })} required />
+                  <Input type="email" placeholder="Email" value={userForm.email} onChange={(e) => setUserForm({ ...userForm, email: e.target.value })} required />
+                  <Input type="password" placeholder="Temporary password" value={userForm.password} onChange={(e) => setUserForm({ ...userForm, password: e.target.value })} required />
+                  <Select value={userForm.role} onChange={(e) => setUserForm({ ...userForm, role: e.target.value })}>
+                    <option value="staff">staff</option><option value="manager">manager</option><option value="admin">admin</option>
+                  </Select>
+                  <Button type="submit" disabled={busy}>Create User</Button>
+                </form>
+              </CardContent>
             </Card>
           ) : null}
         </section>
@@ -486,37 +406,28 @@ export default function DashboardPage() {
 
       {editingCrop ? (
         <EditModal title="Edit Crop" onCancel={() => setEditingCrop(null)} onSubmit={handleUpdateCrop} busy={busy}>
-          <input className="input" placeholder="Crop name" value={editingCrop.name} onChange={(e) => setEditingCrop({ ...editingCrop, name: e.target.value })} required />
-          <input className="input" placeholder="Category" value={editingCrop.category} onChange={(e) => setEditingCrop({ ...editingCrop, category: e.target.value })} />
+          <Input placeholder="Crop name" value={editingCrop.name} onChange={(e) => setEditingCrop({ ...editingCrop, name: e.target.value })} required />
+          <Input placeholder="Category" value={editingCrop.category} onChange={(e) => setEditingCrop({ ...editingCrop, category: e.target.value })} />
           <div className="grid grid-cols-2 gap-3">
-            <input className="input" type="number" min="0" value={editingCrop.quantity} onChange={(e) => setEditingCrop({ ...editingCrop, quantity: e.target.value })} required />
-            <input className="input" type="number" min="0" value={editingCrop.unitPrice} onChange={(e) => setEditingCrop({ ...editingCrop, unitPrice: e.target.value })} required />
+            <Input type="number" min="0" value={editingCrop.quantity} onChange={(e) => setEditingCrop({ ...editingCrop, quantity: e.target.value })} required />
+            <Input type="number" min="0" value={editingCrop.unitPrice} onChange={(e) => setEditingCrop({ ...editingCrop, unitPrice: e.target.value })} required />
           </div>
-          <textarea className="input min-h-20" placeholder="Notes" value={editingCrop.notes || ""} onChange={(e) => setEditingCrop({ ...editingCrop, notes: e.target.value })} />
-          <input className="input" type="file" accept="image/*" capture="environment" onChange={(e) => handleImagePick(e, setEditingCrop)} />
-          <button className="rounded-md border border-indigo-300 px-4 py-2 text-indigo-700" type="button" onClick={() => detectCrop(setEditingCrop, editingCrop.imageUrl)} disabled={busy}>
-            Detect Crop (AI)
-          </button>
+          <Textarea value={editingCrop.notes || ""} onChange={(e) => setEditingCrop({ ...editingCrop, notes: e.target.value })} />
+          <Input type="file" accept="image/*" capture="environment" onChange={(e) => handleImagePick(e, setEditingCrop)} />
+          <Button type="button" variant="outline" onClick={() => detectCrop(setEditingCrop, editingCrop.imageUrl)} disabled={busy}>Detect Crop</Button>
         </EditModal>
       ) : null}
 
       {editingStatement ? (
         <EditModal title="Edit Statement" onCancel={() => setEditingStatement(null)} onSubmit={handleUpdateStatement} busy={busy}>
-          <select className="input" value={editingStatement.type} onChange={(e) => setEditingStatement({ ...editingStatement, type: e.target.value })}>
-            <option value="income">Income</option>
-            <option value="expense">Expense</option>
-          </select>
-          <input className="input" type="number" min="0" value={editingStatement.amount} onChange={(e) => setEditingStatement({ ...editingStatement, amount: e.target.value })} required />
-          <input className="input" type="date" value={formatDateValue(editingStatement.date)} onChange={(e) => setEditingStatement({ ...editingStatement, date: e.target.value })} />
-          <select className="input" value={editingStatement.crop || ""} onChange={(e) => setEditingStatement({ ...editingStatement, crop: e.target.value })}>
+          <Select value={editingStatement.type} onChange={(e) => setEditingStatement({ ...editingStatement, type: e.target.value })}><option value="income">Income</option><option value="expense">Expense</option></Select>
+          <Input type="number" min="0" value={editingStatement.amount} onChange={(e) => setEditingStatement({ ...editingStatement, amount: e.target.value })} required />
+          <Input type="date" value={formatDateValue(editingStatement.date)} onChange={(e) => setEditingStatement({ ...editingStatement, date: e.target.value })} />
+          <Select value={editingStatement.crop || ""} onChange={(e) => setEditingStatement({ ...editingStatement, crop: e.target.value })}>
             <option value="">Select crop (optional)</option>
-            {crops.map((crop) => (
-              <option key={crop._id} value={crop._id}>
-                {crop.name}
-              </option>
-            ))}
-          </select>
-          <textarea className="input min-h-20" value={editingStatement.note || ""} onChange={(e) => setEditingStatement({ ...editingStatement, note: e.target.value })} />
+            {crops.map((crop) => <option key={crop._id} value={crop._id}>{crop.name}</option>)}
+          </Select>
+          <Textarea value={editingStatement.note || ""} onChange={(e) => setEditingStatement({ ...editingStatement, note: e.target.value })} />
         </EditModal>
       ) : null}
     </main>
@@ -525,19 +436,9 @@ export default function DashboardPage() {
 
 function MetricCard({ label, value }) {
   return (
-    <article className="rounded-xl bg-white p-4 shadow">
-      <p className="text-sm text-zinc-500">{label}</p>
-      <h3 className="mt-2 text-2xl font-bold">{value}</h3>
-    </article>
-  );
-}
-
-function Card({ title, children }) {
-  return (
-    <section className="rounded-2xl bg-white p-4 shadow sm:p-6">
-      <h2 className="mb-4 text-xl font-semibold">{title}</h2>
-      {children}
-    </section>
+    <motion.article initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
+      <Card><CardContent><p className="text-sm text-zinc-500">{label}</p><h3 className="mt-2 text-2xl font-bold">{value}</h3></CardContent></Card>
+    </motion.article>
   );
 }
 
@@ -548,12 +449,8 @@ function EditModal({ title, children, onCancel, onSubmit, busy }) {
         <h3 className="text-lg font-semibold">{title}</h3>
         {children}
         <div className="flex justify-end gap-2">
-          <button className="rounded-md border border-zinc-300 px-4 py-2" type="button" onClick={onCancel}>
-            Cancel
-          </button>
-          <button className="rounded-md bg-zinc-900 px-4 py-2 text-white" disabled={busy}>
-            Save
-          </button>
+          <Button type="button" variant="outline" onClick={onCancel}>Cancel</Button>
+          <Button disabled={busy}>Save</Button>
         </div>
       </form>
     </div>

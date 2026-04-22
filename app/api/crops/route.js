@@ -17,7 +17,18 @@ export async function POST(request) {
 
   try {
     const body = await request.json();
-    const { name, category, quantity, unitPrice, notes, imageUrl } = body;
+    const {
+      name,
+      category,
+      quantity,
+      unitPrice,
+      notes,
+      imageUrl,
+      detectionLabel,
+      detectionRawLabel,
+      detectionConfidence,
+      detectionStatus,
+    } = body;
     const quantityValue = Number(quantity);
     const unitPriceValue = Number(unitPrice);
 
@@ -33,6 +44,10 @@ export async function POST(request) {
       unitPrice: unitPriceValue,
       notes,
       imageUrl: imageUrl || "",
+      detectionLabel: detectionLabel || "",
+      detectionRawLabel: detectionRawLabel || "",
+      detectionConfidence: Number(detectionConfidence) || 0,
+      detectionStatus: detectionStatus || "unreviewed",
       createdBy: user.id,
     });
 

@@ -36,6 +36,10 @@ export async function PUT(request, { params }) {
         unitPrice: unitPriceValue,
         notes: body.notes,
         imageUrl: body.imageUrl || "",
+        detectionLabel: body.detectionLabel || "",
+        detectionRawLabel: body.detectionRawLabel || "",
+        detectionConfidence: Number(body.detectionConfidence) || 0,
+        detectionStatus: body.detectionStatus || "unreviewed",
       },
       { new: true, runValidators: true }
     );

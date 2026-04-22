@@ -8,6 +8,14 @@ const cropSchema = new mongoose.Schema(
     unitPrice: { type: Number, required: true, min: 0 },
     notes: { type: String, default: "" },
     imageUrl: { type: String, default: "" },
+    detectionLabel: { type: String, default: "" },
+    detectionRawLabel: { type: String, default: "" },
+    detectionConfidence: { type: Number, default: 0 },
+    detectionStatus: {
+      type: String,
+      enum: ["unreviewed", "needs_review", "accepted"],
+      default: "unreviewed",
+    },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
   },
   { timestamps: true }
