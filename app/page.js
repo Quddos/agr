@@ -1,165 +1,70 @@
-"use client";
+import Image from "next/image";
+import Link from "next/link";
 
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+const features = [
+  "Role-based operations for admin, manager and staff",
+  "Crop inventory with camera capture and AI-assisted detection",
+  "Income and expense statement management with live net balance",
+  "PWA-ready deployment for mobile and desktop usage",
+];
 
-const initialRegister = { name: "", email: "", password: "", role: "staff" };
-const initialLogin = { email: "", password: "" };
-
-export default function HomePage() {
-  const router = useRouter();
-  const [tab, setTab] = useState("login");
-  const [loginForm, setLoginForm] = useState(initialLogin);
-  const [registerForm, setRegisterForm] = useState(initialRegister);
-  const [message, setMessage] = useState("");
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    fetch("/api/auth/me")
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (data?.user) router.push("/dashboard");
-      })
-      .catch(() => {});
-  }, [router]);
-
-  async function submitForm(endpoint, payload) {
-    setLoading(true);
-    setMessage("");
-    try {
-      const res = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setMessage(data.message || "Request failed.");
-        return;
-      }
-
-      router.push("/dashboard");
-    } catch {
-      setMessage("Network error.");
-    } finally {
-      setLoading(false);
-    }
-  }
-
+export default function LandingPage() {
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-6xl items-center justify-center p-4 sm:p-8">
-      <section className="grid w-full overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-lg lg:grid-cols-2">
-        <aside className="bg-emerald-700 p-8 text-white">
-          <h1 className="text-3xl font-bold">Agric Management System</h1>
-          <p className="mt-4 text-emerald-100">
-            Manage crops, monitor financial statements, and control role-based operations from one fast,
-            responsive dashboard.
-          </p>
-        </aside>
-
-        <div className="p-6 sm:p-10">
-          <div className="mb-6 flex gap-2 rounded-lg bg-zinc-100 p-1">
-            <button
-              className={`w-full rounded-md px-4 py-2 text-sm font-semibold ${
-                tab === "login" ? "bg-white shadow-sm" : ""
-              }`}
-              onClick={() => setTab("login")}
-            >
-              Login
-            </button>
-            <button
-              className={`w-full rounded-md px-4 py-2 text-sm font-semibold ${
-                tab === "register" ? "bg-white shadow-sm" : ""
-              }`}
-              onClick={() => setTab("register")}
-            >
-              Register
-            </button>
-          </div>
-
-          {tab === "login" ? (
-            <form
-              className="space-y-4"
-              onSubmit={(e) => {
-                e.preventDefault();
-                submitForm("/api/auth/login", loginForm);
-              }}
-            >
-              <input
-                className="w-full rounded-lg border border-zinc-300 px-4 py-3 outline-none focus:border-emerald-600"
-                type="email"
-                placeholder="Email"
-                value={loginForm.email}
-                onChange={(e) => setLoginForm({ ...loginForm, email: e.target.value })}
-                required
-              />
-              <input
-                className="w-full rounded-lg border border-zinc-300 px-4 py-3 outline-none focus:border-emerald-600"
-                type="password"
-                placeholder="Password"
-                value={loginForm.password}
-                onChange={(e) => setLoginForm({ ...loginForm, password: e.target.value })}
-                required
-              />
-              <button
-                className="w-full rounded-lg bg-emerald-700 px-4 py-3 font-semibold text-white hover:bg-emerald-800"
-                type="submit"
-                disabled={loading}
-              >
-                {loading ? "Processing..." : "Login"}
-              </button>
-            </form>
-          ) : (
-            <form
-              className="space-y-4"
-              onSubmit={(e) => {
-                e.preventDefault();
-                submitForm("/api/auth/register", registerForm);
-              }}
-            >
-              <input
-                className="w-full rounded-lg border border-zinc-300 px-4 py-3 outline-none focus:border-emerald-600"
-                placeholder="Full Name"
-                value={registerForm.name}
-                onChange={(e) => setRegisterForm({ ...registerForm, name: e.target.value })}
-                required
-              />
-              <input
-                className="w-full rounded-lg border border-zinc-300 px-4 py-3 outline-none focus:border-emerald-600"
-                type="email"
-                placeholder="Email"
-                value={registerForm.email}
-                onChange={(e) => setRegisterForm({ ...registerForm, email: e.target.value })}
-                required
-              />
-              <input
-                className="w-full rounded-lg border border-zinc-300 px-4 py-3 outline-none focus:border-emerald-600"
-                type="password"
-                placeholder="Password"
-                value={registerForm.password}
-                onChange={(e) => setRegisterForm({ ...registerForm, password: e.target.value })}
-                required
-              />
-              <select
-                className="w-full rounded-lg border border-zinc-300 px-4 py-3 outline-none focus:border-emerald-600"
-                value={registerForm.role}
-                onChange={(e) => setRegisterForm({ ...registerForm, role: e.target.value })}
-              >
-                <option value="staff">Staff</option>
-                <option value="manager">Manager</option>
-              </select>
-              <button
-                className="w-full rounded-lg bg-emerald-700 px-4 py-3 font-semibold text-white hover:bg-emerald-800"
-                type="submit"
-                disabled={loading}
-              >
-                {loading ? "Processing..." : "Create Account"}
-              </button>
-            </form>
-          )}
-
-          {message ? <p className="mt-4 text-sm text-red-600">{message}</p> : null}
+    <main className="min-h-screen bg-gradient-to-b from-emerald-50 via-white to-white">
+      <header className="mx-auto flex w-full max-w-7xl items-center justify-between px-4 py-6 sm:px-8">
+        <h1 className="text-xl font-bold text-emerald-800">AgricMS</h1>
+        <div className="flex items-center gap-3">
+          <Link href="/auth" className="rounded-md border border-emerald-700 px-4 py-2 text-emerald-700">
+            Login
+          </Link>
+          <Link href="/auth" className="rounded-md bg-emerald-700 px-4 py-2 text-white">
+            Get Started
+          </Link>
         </div>
+      </header>
+
+      <section className="mx-auto grid w-full max-w-7xl gap-10 px-4 py-10 sm:px-8 lg:grid-cols-2 lg:py-16">
+        <div className="space-y-6">
+          <p className="inline-block rounded-full bg-emerald-100 px-3 py-1 text-sm font-medium text-emerald-800">
+            Smart Agriculture Management Platform
+          </p>
+          <h2 className="text-4xl font-extrabold tracking-tight text-zinc-900 sm:text-5xl">
+            Grow faster with data-driven farm operations
+          </h2>
+          <p className="text-lg text-zinc-600">
+            Manage crops, users, statements, and field records from one modern dashboard. Built for teams and
+            optimized for mobile.
+          </p>
+          <div className="flex flex-wrap gap-3">
+            <Link href="/auth" className="rounded-md bg-emerald-700 px-5 py-3 font-semibold text-white">
+              Launch Dashboard
+            </Link>
+            <a href="#features" className="rounded-md border border-zinc-300 px-5 py-3 font-semibold text-zinc-700">
+              Explore Features
+            </a>
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-lg">
+          <Image src="/demo/dashboard-demo.svg" alt="Dashboard preview" width={900} height={620} priority className="h-auto w-full rounded-xl" />
+        </div>
+      </section>
+
+      <section id="features" className="mx-auto w-full max-w-7xl px-4 py-8 sm:px-8 sm:py-12">
+        <h3 className="mb-6 text-2xl font-bold">Why teams pick AgricMS</h3>
+        <div className="grid gap-4 md:grid-cols-2">
+          {features.map((feature) => (
+            <article key={feature} className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
+              <p className="font-medium text-zinc-800">{feature}</p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className="mx-auto grid w-full max-w-7xl gap-4 px-4 pb-16 sm:px-8 md:grid-cols-3">
+        <Image src="/demo/crop-demo.svg" alt="Crop demo" width={600} height={450} className="h-full w-full rounded-xl border border-zinc-200 bg-white p-3 shadow-sm" />
+        <Image src="/demo/statement-demo.svg" alt="Statement demo" width={600} height={450} className="h-full w-full rounded-xl border border-zinc-200 bg-white p-3 shadow-sm" />
+        <Image src="/demo/mobile-demo.svg" alt="Mobile demo" width={600} height={450} className="h-full w-full rounded-xl border border-zinc-200 bg-white p-3 shadow-sm" />
       </section>
     </main>
   );

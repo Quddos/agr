@@ -8,7 +8,7 @@ export function proxy(request) {
 
   const token = request.cookies.get("ags_token")?.value;
   if (!token || !verifyToken(token)) {
-    return NextResponse.redirect(new URL("/", request.url));
+    return NextResponse.redirect(new URL("/auth", request.url));
   }
 
   return NextResponse.next();

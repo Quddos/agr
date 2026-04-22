@@ -1,14 +1,25 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 
-const emptyCrop = { name: "", category: "", quantity: "", unitPrice: "", notes: "", imageUrl: "" };
+const emptyCrop = {
+  name: "",
+  category: "",
+  quantity: "",
+  unitPrice: "",
+  notes: "",
+  imageUrl: "",
+  detectionLabel: "",
+  detectionConfidence: "",
+};
 const emptyStatement = { type: "income", amount: "", note: "", date: "", crop: "" };
+const emptyUser = { name: "", email: "", password: "", role: "staff" };
 
 export default function DashboardPage() {
   const router = useRouter();
+  const modelRef = useRef(null);
   const [user, setUser] = useState(null);
   const [crops, setCrops] = useState([]);
   const [statements, setStatements] = useState([]);
@@ -16,6 +27,7 @@ export default function DashboardPage() {
   const [summary, setSummary] = useState({ income: 0, expense: 0, net: 0 });
   const [cropForm, setCropForm] = useState(emptyCrop);
   const [statementForm, setStatementForm] = useState(emptyStatement);
+  const [userForm, setUserForm] = useState(emptyUser);
   const [editingCrop, setEditingCrop] = useState(null);
   const [editingStatement, setEditingStatement] = useState(null);
   const [cropQuery, setCropQuery] = useState("");
@@ -26,6 +38,7 @@ export default function DashboardPage() {
   const canDelete = user?.role === "admin" || user?.role === "manager";
   const canManageUsers = canDelete;
   const canChangeRole = user?.role === "admin";
+  const canCreateUsers = user?.role === "admin";
 
   const filteredCrops = useMemo(
     () =>
@@ -47,6 +60,13 @@ export default function DashboardPage() {
     () => crops.reduce((acc, item) => acc + item.quantity * item.unitPrice, 0),
     [crops]
   );
+
+  const lowStockCrops = useMemo(() => crops.filter((crop) => Number(crop.quantity) < 100), [crops]);
+
+  const topCrop = useMemo(() => {
+    if (crops.length === 0) return null;
+    return [...crops].sort((a, b) => b.quantity * b.unitPrice - a.quantity * a.unitPrice)[0];
+  }, [crops]);
 
   const apiRequest = useCallback(async (url, options = {}) => {
     const res = await fetch(url, {
@@ -81,7 +101,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     queueMicrotask(() => {
-      refreshData().catch(() => router.push("/"));
+      refreshData().catch(() => router.push("/auth"));
     });
   }, [refreshData, router]);
 
@@ -110,10 +130,7 @@ export default function DashboardPage() {
     e.preventDefault();
     if (!editingCrop?._id) return;
     await runAction(async () => {
-      await apiRequest(`/api/crops/${editingCrop._id}`, {
-        method: "PUT",
-        body: JSON.stringify(editingCrop),
-      });
+      await apiRequest(`/api/crops/${editingCrop._id}`, { method: "PUT", body: JSON.stringify(editingCrop) });
       setEditingCrop(null);
     });
   }
@@ -152,26 +169,96 @@ export default function DashboardPage() {
   }
 
   async function updateUserRole(id, role) {
-    await runAction(() =>
-      apiRequest(`/api/users/${id}`, { method: "PATCH", body: JSON.stringify({ role }) })
-    );
+    await runAction(() => apiRequest(`/api/users/${id}`, { method: "PATCH", body: JSON.stringify({ role }) }));
+  }
+
+  async function handleCreateUser(e) {
+    e.preventDefault();
+    await runAction(async () => {
+      await apiRequest("/api/users", { method: "POST", body: JSON.stringify(userForm) });
+      setUserForm(emptyUser);
+    });
   }
 
   async function logout() {
     await fetch("/api/auth/logout", { method: "POST" });
-    router.push("/");
+    router.push("/auth");
   }
 
   async function handleImagePick(event, setTarget) {
     const file = event.target.files?.[0];
-    if (!file) return;
-    if (!file.type.startsWith("image/")) return;
-
+    if (!file || !file.type.startsWith("image/")) return;
     const reader = new FileReader();
     reader.onload = () => {
       setTarget((prev) => ({ ...prev, imageUrl: String(reader.result || "") }));
     };
     reader.readAsDataURL(file);
+  }
+
+  async function loadDetectionModel() {
+    if (modelRef.current) return modelRef.current;
+    const mobilenet = await import("@tensorflow-models/mobilenet");
+    await import("@tensorflow/tfjs");
+    modelRef.current = await mobilenet.load();
+    return modelRef.current;
+  }
+
+  async function detectCrop(setTarget, imageUrl) {
+    if (!imageUrl) {
+      setErrorMessage("Upload or capture an image before detection.");
+      return;
+    }
+
+    setBusy(true);
+    setErrorMessage("");
+    try {
+      const model = await loadDetectionModel();
+      const img = document.createElement("img");
+      img.src = imageUrl;
+      await new Promise((resolve, reject) => {
+        img.onload = resolve;
+        img.onerror = reject;
+      });
+
+      const predictions = await model.classify(img);
+      const best = predictions?.[0];
+      if (!best) throw new Error("No prediction available for this image.");
+
+      const label = best.className;
+      const confidence = (best.probability * 100).toFixed(2);
+      setTarget((prev) => ({
+        ...prev,
+        detectionLabel: label,
+        detectionConfidence: confidence,
+        notes: prev.notes
+          ? `${prev.notes}\nAI Hint: ${label} (${confidence}%)`
+          : `AI Hint: ${label} (${confidence}%)`,
+      }));
+    } catch {
+      setErrorMessage("Crop detection failed. Please try with a clearer image.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function exportStatementsCsv() {
+    if (filteredStatements.length === 0) return;
+    const header = ["Type", "Amount", "Date", "Crop", "Note"];
+    const rows = filteredStatements.map((item) => [
+      item.type,
+      item.amount,
+      formatDateValue(item.date),
+      item.crop?.name || "",
+      (item.note || "").replaceAll(",", ";"),
+    ]);
+    const csv = [header, ...rows].map((line) => line.join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "statements-export.csv";
+    link.click();
+    URL.revokeObjectURL(url);
   }
 
   if (!user) return <main className="p-6 text-center text-zinc-600">Loading dashboard...</main>;
@@ -185,9 +272,14 @@ export default function DashboardPage() {
             Signed in as {user.name} ({user.role})
           </p>
         </div>
-        <button className="rounded-md bg-zinc-900 px-4 py-2 text-white" onClick={logout}>
-          Logout
-        </button>
+        <div className="flex gap-2">
+          <button className="rounded-md border border-zinc-300 px-4 py-2 text-sm" onClick={exportStatementsCsv}>
+            Export Statements CSV
+          </button>
+          <button className="rounded-md bg-zinc-900 px-4 py-2 text-white" onClick={logout}>
+            Logout
+          </button>
+        </div>
       </header>
 
       {errorMessage ? <p className="mb-4 rounded-md bg-red-50 p-3 text-sm text-red-700">{errorMessage}</p> : null}
@@ -199,8 +291,40 @@ export default function DashboardPage() {
         <MetricCard label="Net Balance" value={`$${summary.net.toFixed(2)}`} />
       </section>
 
+      <section className="mb-6 grid gap-4 lg:grid-cols-3">
+        <Card title="Low Stock Alerts">
+          {lowStockCrops.length === 0 ? (
+            <p className="text-sm text-zinc-600">No low-stock alerts.</p>
+          ) : (
+            <ul className="space-y-2">
+              {lowStockCrops.map((crop) => (
+                <li key={crop._id} className="rounded-md bg-amber-50 p-2 text-sm text-amber-800">
+                  {crop.name}: {crop.quantity} remaining units
+                </li>
+              ))}
+            </ul>
+          )}
+        </Card>
+        <Card title="Top Value Crop">
+          {topCrop ? (
+            <div className="text-sm text-zinc-700">
+              <p className="text-lg font-semibold">{topCrop.name}</p>
+              <p>Estimated stock value: ${(topCrop.quantity * topCrop.unitPrice).toFixed(2)}</p>
+            </div>
+          ) : (
+            <p className="text-sm text-zinc-600">No crop records yet.</p>
+          )}
+        </Card>
+        <Card title="Quick Health Check">
+          <p className="text-sm text-zinc-700">
+            Backend health endpoint available at <code>/api/health</code>.
+          </p>
+          <p className="mt-2 text-xs text-zinc-500">Use this endpoint for uptime monitoring on deployment.</p>
+        </Card>
+      </section>
+
       <section className="grid gap-6 lg:grid-cols-2">
-        <Card title="Crop CRUD + Camera Capture">
+        <Card title="Crop CRUD + Phase 2 AI Detection">
           <form className="mb-4 grid gap-3" onSubmit={handleAddCrop}>
             <input className="input" placeholder="Crop name" value={cropForm.name} onChange={(e) => setCropForm({ ...cropForm, name: e.target.value })} required />
             <input className="input" placeholder="Category" value={cropForm.category} onChange={(e) => setCropForm({ ...cropForm, category: e.target.value })} />
@@ -212,42 +336,33 @@ export default function DashboardPage() {
             <label className="text-sm text-zinc-600">Capture or upload crop image</label>
             <input className="input" type="file" accept="image/*" capture="environment" onChange={(e) => handleImagePick(e, setCropForm)} />
             {cropForm.imageUrl ? (
-              <Image
-                src={cropForm.imageUrl}
-                alt="Crop preview"
-                width={96}
-                height={96}
-                unoptimized
-                className="h-24 w-24 rounded-lg object-cover"
-              />
+              <Image src={cropForm.imageUrl} alt="Crop preview" width={96} height={96} unoptimized className="h-24 w-24 rounded-lg object-cover" />
+            ) : null}
+            <button
+              className="rounded-md border border-indigo-300 px-4 py-2 text-indigo-700"
+              type="button"
+              onClick={() => detectCrop(setCropForm, cropForm.imageUrl)}
+              disabled={busy}
+            >
+              Detect Crop (AI)
+            </button>
+            {cropForm.detectionLabel ? (
+              <p className="text-sm text-indigo-700">
+                AI Hint: {cropForm.detectionLabel} ({cropForm.detectionConfidence}%)
+              </p>
             ) : null}
             <button className="rounded-md bg-emerald-700 px-4 py-2 font-semibold text-white" disabled={busy}>
               Add Crop
             </button>
           </form>
 
-          <input
-            className="input mb-3"
-            placeholder="Search crops..."
-            value={cropQuery}
-            onChange={(e) => setCropQuery(e.target.value)}
-          />
-
+          <input className="input mb-3" placeholder="Search crops..." value={cropQuery} onChange={(e) => setCropQuery(e.target.value)} />
           <div className="space-y-2">
             {filteredCrops.map((item) => (
               <div key={item._id} className="rounded-lg border border-zinc-200 p-3">
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex gap-3">
-                    {item.imageUrl ? (
-                      <Image
-                        src={item.imageUrl}
-                        alt={item.name}
-                        width={64}
-                        height={64}
-                        unoptimized
-                        className="h-16 w-16 rounded-md object-cover"
-                      />
-                    ) : null}
+                    {item.imageUrl ? <Image src={item.imageUrl} alt={item.name} width={64} height={64} unoptimized className="h-16 w-16 rounded-md object-cover" /> : null}
                     <div>
                       <p className="font-semibold">{item.name}</p>
                       <p className="text-sm text-zinc-600">
@@ -259,11 +374,11 @@ export default function DashboardPage() {
                     <button className="text-sm text-blue-700" onClick={() => setEditingCrop({ ...item })}>
                       Edit
                     </button>
-                    {canDelete && (
+                    {canDelete ? (
                       <button className="text-sm text-red-600" onClick={() => handleDeleteCrop(item._id)}>
                         Delete
                       </button>
-                    )}
+                    ) : null}
                   </div>
                 </div>
               </div>
@@ -293,11 +408,7 @@ export default function DashboardPage() {
             </button>
           </form>
 
-          <select
-            className="input mb-3"
-            value={statementTypeFilter}
-            onChange={(e) => setStatementTypeFilter(e.target.value)}
-          >
+          <select className="input mb-3" value={statementTypeFilter} onChange={(e) => setStatementTypeFilter(e.target.value)}>
             <option value="all">All types</option>
             <option value="income">Income</option>
             <option value="expense">Expense</option>
@@ -316,11 +427,11 @@ export default function DashboardPage() {
                   <button className="text-sm text-blue-700" onClick={() => setEditingStatement({ ...item, crop: item.crop?._id || "" })}>
                     Edit
                   </button>
-                  {canDelete && (
+                  {canDelete ? (
                     <button className="text-sm text-red-600" onClick={() => handleDeleteStatement(item._id)}>
                       Delete
                     </button>
-                  )}
+                  ) : null}
                 </div>
               </div>
             ))}
@@ -328,8 +439,8 @@ export default function DashboardPage() {
         </Card>
       </section>
 
-      {canManageUsers && (
-        <section className="mt-6">
+      {canManageUsers ? (
+        <section className="mt-6 grid gap-6 xl:grid-cols-2">
           <Card title="Role Management">
             <div className="space-y-2">
               {users.map((member) => (
@@ -340,46 +451,57 @@ export default function DashboardPage() {
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="rounded-full bg-zinc-100 px-3 py-1 text-sm">{member.role}</span>
-                    {canChangeRole && (
+                    {canChangeRole ? (
                       <select className="input w-auto" value={member.role} onChange={(e) => updateUserRole(member._id, e.target.value)}>
                         <option value="admin">admin</option>
                         <option value="manager">manager</option>
                         <option value="staff">staff</option>
                       </select>
-                    )}
+                    ) : null}
                   </div>
                 </div>
               ))}
             </div>
           </Card>
+
+          {canCreateUsers ? (
+            <Card title="Admin: Create User + Assign Role">
+              <form className="grid gap-3" onSubmit={handleCreateUser}>
+                <input className="input" placeholder="Full Name" value={userForm.name} onChange={(e) => setUserForm({ ...userForm, name: e.target.value })} required />
+                <input className="input" type="email" placeholder="Email" value={userForm.email} onChange={(e) => setUserForm({ ...userForm, email: e.target.value })} required />
+                <input className="input" type="password" placeholder="Temporary password" value={userForm.password} onChange={(e) => setUserForm({ ...userForm, password: e.target.value })} required />
+                <select className="input" value={userForm.role} onChange={(e) => setUserForm({ ...userForm, role: e.target.value })}>
+                  <option value="staff">staff</option>
+                  <option value="manager">manager</option>
+                  <option value="admin">admin</option>
+                </select>
+                <button className="rounded-md bg-emerald-700 px-4 py-2 font-semibold text-white" disabled={busy}>
+                  Create User
+                </button>
+              </form>
+            </Card>
+          ) : null}
         </section>
-      )}
+      ) : null}
 
       {editingCrop ? (
-        <EditModal
-          title="Edit Crop"
-          onCancel={() => setEditingCrop(null)}
-          onSubmit={handleUpdateCrop}
-          busy={busy}
-        >
+        <EditModal title="Edit Crop" onCancel={() => setEditingCrop(null)} onSubmit={handleUpdateCrop} busy={busy}>
           <input className="input" placeholder="Crop name" value={editingCrop.name} onChange={(e) => setEditingCrop({ ...editingCrop, name: e.target.value })} required />
           <input className="input" placeholder="Category" value={editingCrop.category} onChange={(e) => setEditingCrop({ ...editingCrop, category: e.target.value })} />
           <div className="grid grid-cols-2 gap-3">
-            <input className="input" type="number" min="0" placeholder="Quantity" value={editingCrop.quantity} onChange={(e) => setEditingCrop({ ...editingCrop, quantity: e.target.value })} required />
-            <input className="input" type="number" min="0" placeholder="Unit price" value={editingCrop.unitPrice} onChange={(e) => setEditingCrop({ ...editingCrop, unitPrice: e.target.value })} required />
+            <input className="input" type="number" min="0" value={editingCrop.quantity} onChange={(e) => setEditingCrop({ ...editingCrop, quantity: e.target.value })} required />
+            <input className="input" type="number" min="0" value={editingCrop.unitPrice} onChange={(e) => setEditingCrop({ ...editingCrop, unitPrice: e.target.value })} required />
           </div>
           <textarea className="input min-h-20" placeholder="Notes" value={editingCrop.notes || ""} onChange={(e) => setEditingCrop({ ...editingCrop, notes: e.target.value })} />
           <input className="input" type="file" accept="image/*" capture="environment" onChange={(e) => handleImagePick(e, setEditingCrop)} />
+          <button className="rounded-md border border-indigo-300 px-4 py-2 text-indigo-700" type="button" onClick={() => detectCrop(setEditingCrop, editingCrop.imageUrl)} disabled={busy}>
+            Detect Crop (AI)
+          </button>
         </EditModal>
       ) : null}
 
       {editingStatement ? (
-        <EditModal
-          title="Edit Statement"
-          onCancel={() => setEditingStatement(null)}
-          onSubmit={handleUpdateStatement}
-          busy={busy}
-        >
+        <EditModal title="Edit Statement" onCancel={() => setEditingStatement(null)} onSubmit={handleUpdateStatement} busy={busy}>
           <select className="input" value={editingStatement.type} onChange={(e) => setEditingStatement({ ...editingStatement, type: e.target.value })}>
             <option value="income">Income</option>
             <option value="expense">Expense</option>
