@@ -1,6 +1,7 @@
 import { connectToDatabase } from "@/lib/db";
 import { forbiddenResponse } from "@/lib/auth";
 import { requireAuth } from "@/lib/apiAuth";
+import { canDeleteRecords } from "@/lib/permissions";
 import { Statement } from "@/models/Statement";
 
 export async function PUT(request, { params }) {
@@ -9,12 +10,17 @@ export async function PUT(request, { params }) {
 
   try {
     const body = await request.json();
+    const amountValue = Number(body.amount);
+    if (!["income", "expense"].includes(body.type) || Number.isNaN(amountValue)) {
+      return Response.json({ message: "Missing required fields." }, { status: 400 });
+    }
+
     await connectToDatabase();
     const statement = await Statement.findByIdAndUpdate(
       params.id,
       {
         type: body.type,
-        amount: Number(body.amount),
+        amount: amountValue,
         note: body.note,
         date: body.date ? new Date(body.date) : new Date(),
         crop: body.crop || null,
@@ -32,7 +38,7 @@ export async function PUT(request, { params }) {
 export async function DELETE(request, { params }) {
   const { error, user } = requireAuth(request);
   if (error) return error;
-  if (user.role !== "admin" && user.role !== "manager") {
+  if (!canDeleteRecords(user.role)) {
     return forbiddenResponse("Only admin or manager can delete statements.");
   }
 

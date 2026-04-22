@@ -29,14 +29,15 @@ export async function POST(request) {
   try {
     const body = await request.json();
     const { type, amount, note, date, crop } = body;
-    if (!type || amount === undefined) {
+    const amountValue = Number(amount);
+    if (!["income", "expense"].includes(type) || Number.isNaN(amountValue)) {
       return Response.json({ message: "Missing required fields." }, { status: 400 });
     }
 
     await connectToDatabase();
     const statement = await Statement.create({
       type,
-      amount: Number(amount),
+      amount: amountValue,
       note,
       date: date ? new Date(date) : new Date(),
       crop: crop || null,

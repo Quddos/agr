@@ -6,6 +6,8 @@
 
 body {
   font-family: Inter, Arial, Helvetica, sans-serif;
+  background: #f4f7f6;
+  color: #18181b;
 }
 
 .input {
@@ -14,8 +16,11 @@ body {
   border-radius: 0.5rem;
   padding: 0.65rem 0.9rem;
   outline: none;
+  background: #fff;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
 }
 
 .input:focus {
   border-color: #059669;
+  box-shadow: 0 0 0 3px rgba(5, 150, 105, 0.15);
 }

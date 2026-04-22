@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 const initialRegister = { name: "", email: "", password: "", role: "staff" };
@@ -13,6 +13,15 @@ export default function HomePage() {
   const [registerForm, setRegisterForm] = useState(initialRegister);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/auth/me")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data?.user) router.push("/dashboard");
+      })
+      .catch(() => {});
+  }, [router]);
 
   async function submitForm(endpoint, payload) {
     setLoading(true);
@@ -29,8 +38,6 @@ export default function HomePage() {
         return;
       }
 
-      localStorage.setItem("ags_token", data.token);
-      localStorage.setItem("ags_user", JSON.stringify(data.user));
       router.push("/dashboard");
     } catch {
       setMessage("Network error.");

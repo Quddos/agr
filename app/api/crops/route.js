@@ -17,9 +17,11 @@ export async function POST(request) {
 
   try {
     const body = await request.json();
-    const { name, category, quantity, unitPrice, notes } = body;
+    const { name, category, quantity, unitPrice, notes, imageUrl } = body;
+    const quantityValue = Number(quantity);
+    const unitPriceValue = Number(unitPrice);
 
-    if (!name || quantity === undefined || unitPrice === undefined) {
+    if (!name || Number.isNaN(quantityValue) || Number.isNaN(unitPriceValue)) {
       return Response.json({ message: "Missing required fields." }, { status: 400 });
     }
 
@@ -27,9 +29,10 @@ export async function POST(request) {
     const crop = await Crop.create({
       name,
       category,
-      quantity: Number(quantity),
-      unitPrice: Number(unitPrice),
+      quantity: quantityValue,
+      unitPrice: unitPriceValue,
       notes,
+      imageUrl: imageUrl || "",
       createdBy: user.id,
     });
 

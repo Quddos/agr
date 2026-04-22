@@ -7,6 +7,7 @@ const cropSchema = new mongoose.Schema(
     quantity: { type: Number, required: true, min: 0 },
     unitPrice: { type: Number, required: true, min: 0 },
     notes: { type: String, default: "" },
+    imageUrl: { type: String, default: "" },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
   },
   { timestamps: true }

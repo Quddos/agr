@@ -1,7 +1,7 @@
 import bcrypt from "bcryptjs";
 import { connectToDatabase } from "@/lib/db";
 import { User } from "@/models/User";
-import { signToken } from "@/lib/auth";
+import { makeAuthCookie, signToken } from "@/lib/auth";
 
 export async function POST(request) {
   try {
@@ -21,10 +21,18 @@ export async function POST(request) {
 
     const token = signToken({ id: user._id.toString(), role: user.role, email: user.email });
 
-    return Response.json({
-      token,
-      user: { id: user._id, name: user.name, email: user.email, role: user.role },
-    });
+    return new Response(
+      JSON.stringify({
+        user: { id: user._id, name: user.name, email: user.email, role: user.role },
+      }),
+      {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json",
+          "Set-Cookie": makeAuthCookie(token),
+        },
+      }
+    );
   } catch {
     return Response.json({ message: "Login failed." }, { status: 500 });
   }

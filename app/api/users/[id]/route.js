@@ -1,12 +1,13 @@
 import { connectToDatabase } from "@/lib/db";
 import { requireAuth } from "@/lib/apiAuth";
 import { forbiddenResponse } from "@/lib/auth";
+import { canChangeRole } from "@/lib/permissions";
 import { User } from "@/models/User";
 
 export async function PATCH(request, { params }) {
   const { error, user } = requireAuth(request);
   if (error) return error;
-  if (user.role !== "admin") {
+  if (!canChangeRole(user.role)) {
     return forbiddenResponse("Only admin can change user roles.");
   }
 
