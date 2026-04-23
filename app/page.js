@@ -3,6 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { motion } from "framer-motion";
+import { useEffect, useMemo, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -15,6 +16,25 @@ const features = [
 ];
 
 export default function LandingPage() {
+  const [crops, setCrops] = useState([]);
+
+  useEffect(() => {
+    // Only show "your crops" when logged in.
+    fetch("/api/auth/me")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((me) => {
+        if (!me?.user) return;
+        return fetch("/api/crops").then((r) => (r.ok ? r.json() : null));
+      })
+      .then((data) => setCrops(data?.data || []))
+      .catch(() => {});
+  }, []);
+
+  const cropsWithImages = useMemo(
+    () => crops.filter((c) => c?.imageUrl).slice(0, 12),
+    [crops]
+  );
+
   return (
     <main className="min-h-screen bg-gradient-to-b from-emerald-50 via-white to-cyan-50">
       <header className="mx-auto flex w-full max-w-7xl items-center justify-between px-4 py-6 sm:px-8">
@@ -78,7 +98,35 @@ export default function LandingPage() {
         </div>
       </section>
 
-      <section className="mx-auto grid w-full max-w-7xl gap-4 px-4 pb-16 sm:px-8 md:grid-cols-3">
+      {cropsWithImages.length ? (
+        <section className="mx-auto w-full max-w-7xl px-4 pb-10 sm:px-8">
+          <h3 className="mb-4 text-2xl font-bold text-zinc-900">Your recent crops</h3>
+          <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
+            {cropsWithImages.map((crop) => (
+              <Card key={crop._id} className="overflow-hidden">
+                <CardContent className="p-0">
+                  <Image
+                    src={crop.imageUrl}
+                    alt={crop.name}
+                    width={800}
+                    height={600}
+                    unoptimized
+                    className="h-44 w-full object-cover"
+                  />
+                  <div className="space-y-1 p-4">
+                    <p className="font-semibold text-zinc-900">{crop.name}</p>
+                    <p className="text-sm text-zinc-600">
+                      Qty: {crop.quantity} · ${crop.unitPrice}
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      <section className="mx-auto grid w-full max-w-7xl gap-4 px-4 pb-16 sm:px-8 sm:pb-20 md:grid-cols-3 lg:grid-cols-4">
         <Image src="/demo/crop-demo.svg" alt="Crop module" width={600} height={450} className="h-full w-full rounded-xl border border-zinc-200 bg-white p-2 shadow-sm" />
         <Image src="/demo/statement-demo.svg" alt="Statement module" width={600} height={450} className="h-full w-full rounded-xl border border-zinc-200 bg-white p-2 shadow-sm" />
         <Image src="/demo/mobile-demo.svg" alt="Mobile module" width={600} height={450} className="h-full w-full rounded-xl border border-zinc-200 bg-white p-2 shadow-sm" />
