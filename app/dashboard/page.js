@@ -11,7 +11,17 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 
-const AI_THRESHOLD = 75;
+const DEFAULT_AI_SETTINGS = {
+  aiThreshold: 75,
+  cropMap: [
+    { keywords: ["corn", "maize"], label: "Maize" },
+    { keywords: ["wheat"], label: "Wheat" },
+    { keywords: ["tomato"], label: "Tomato" },
+    { keywords: ["banana"], label: "Banana" },
+    { keywords: ["potato"], label: "Potato" },
+    { keywords: ["rice"], label: "Rice" },
+  ],
+};
 const emptyCrop = {
   name: "",
   category: "",
@@ -26,15 +36,6 @@ const emptyCrop = {
 };
 const emptyStatement = { type: "income", amount: "", note: "", date: "", crop: "" };
 const emptyUser = { name: "", email: "", password: "", role: "staff" };
-
-const cropMap = [
-  { keywords: ["corn", "maize"], label: "Maize" },
-  { keywords: ["wheat"], label: "Wheat" },
-  { keywords: ["tomato"], label: "Tomato" },
-  { keywords: ["banana"], label: "Banana" },
-  { keywords: ["potato"], label: "Potato" },
-  { keywords: ["rice"], label: "Rice" },
-];
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -53,6 +54,11 @@ export default function DashboardPage() {
   const [statementTypeFilter, setStatementTypeFilter] = useState("all");
   const [errorMessage, setErrorMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [aiSettings, setAiSettings] = useState(DEFAULT_AI_SETTINGS);
+  const [aiEditorThreshold, setAiEditorThreshold] = useState(DEFAULT_AI_SETTINGS.aiThreshold);
+  const [aiEditorMapText, setAiEditorMapText] = useState(
+    JSON.stringify(DEFAULT_AI_SETTINGS.cropMap, null, 2)
+  );
 
   const canDelete = user?.role === "admin" || user?.role === "manager";
   const canManageUsers = canDelete;
@@ -85,14 +91,22 @@ export default function DashboardPage() {
     });
     setUser(currentUser.user);
 
-    const requests = [fetch("/api/crops").then((r) => r.json()), fetch("/api/statements").then((r) => r.json())];
+    const requests = [
+      fetch("/api/crops").then((r) => r.json()),
+      fetch("/api/statements").then((r) => r.json()),
+      fetch("/api/settings/ai").then((r) => r.json()),
+    ];
     if (currentUser.user.role === "admin" || currentUser.user.role === "manager") requests.push(fetch("/api/users").then((r) => r.json()));
-    const [cropRes, statementRes, userRes] = await Promise.all(requests);
+    const [cropRes, statementRes, aiRes, userRes] = await Promise.all(requests);
 
     setCrops(cropRes.data || []);
     setStatements(statementRes.data || []);
     setSummary(statementRes.summary || { income: 0, expense: 0, net: 0 });
     setUsers(userRes?.data || []);
+    const nextAi = aiRes?.data || DEFAULT_AI_SETTINGS;
+    setAiSettings(nextAi);
+    setAiEditorThreshold(nextAi.aiThreshold ?? DEFAULT_AI_SETTINGS.aiThreshold);
+    setAiEditorMapText(JSON.stringify(nextAi.cropMap ?? DEFAULT_AI_SETTINGS.cropMap, null, 2));
   }, []);
 
   useEffect(() => {
@@ -122,7 +136,9 @@ export default function DashboardPage() {
 
   function mapCropLabel(rawLabel) {
     const lower = rawLabel.toLowerCase();
-    const mapped = cropMap.find((item) => item.keywords.some((keyword) => lower.includes(keyword)));
+    const mapped = (aiSettings.cropMap || []).find((item) =>
+      (item.keywords || []).some((keyword) => lower.includes(String(keyword).toLowerCase()))
+    );
     return mapped ? mapped.label : "Unknown crop class";
   }
 
@@ -143,7 +159,9 @@ export default function DashboardPage() {
       if (!best) throw new Error("No prediction generated.");
       const confidence = Number((best.probability * 100).toFixed(2));
       const mappedLabel = mapCropLabel(best.className);
-      const status = confidence >= AI_THRESHOLD && mappedLabel !== "Unknown crop class" ? "accepted" : "needs_review";
+      const threshold = Number(aiSettings.aiThreshold ?? DEFAULT_AI_SETTINGS.aiThreshold);
+      const status =
+        confidence >= threshold && mappedLabel !== "Unknown crop class" ? "accepted" : "needs_review";
       setTarget((prev) => ({
         ...prev,
         detectionLabel: mappedLabel,
@@ -221,6 +239,11 @@ export default function DashboardPage() {
 
   async function updateUserRole(id, role) {
     await runAction(() => apiRequest(`/api/users/${id}`, { method: "PATCH", body: JSON.stringify({ role }) }));
+  }
+
+  async function handleRoleChange(id, role) {
+    setUsers((prev) => prev.map((u) => (u._id === id ? { ...u, role } : u)));
+    await updateUserRole(id, role);
   }
 
   async function handleCreateUser(e) {
@@ -375,7 +398,11 @@ export default function DashboardPage() {
                   <div className="flex items-center gap-2">
                     <Badge>{member.role}</Badge>
                     {canChangeRole ? (
-                      <Select className="w-28" value={member.role} onChange={(e) => updateUserRole(member._id, e.target.value)}>
+                      <Select
+                        className="w-28"
+                        value={member.role}
+                        onChange={(e) => handleRoleChange(member._id, e.target.value)}
+                      >
                         <option value="admin">admin</option><option value="manager">manager</option><option value="staff">staff</option>
                       </Select>
                     ) : null}
@@ -401,6 +428,83 @@ export default function DashboardPage() {
               </CardContent>
             </Card>
           ) : null}
+        </section>
+      ) : null}
+
+      {canCreateUsers ? (
+        <section>
+          <Card>
+            <CardHeader>
+              <CardTitle>Admin: AI Model Settings (Phase 2.2)</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="grid gap-2">
+                <label className="text-sm text-zinc-700">Confidence threshold ({aiEditorThreshold}%)</label>
+                <Input
+                  type="number"
+                  min="0"
+                  max="100"
+                  value={aiEditorThreshold}
+                  onChange={(e) => setAiEditorThreshold(e.target.value)}
+                />
+              </div>
+              <div className="grid gap-2">
+                <label className="text-sm text-zinc-700">Crop mapping (JSON array)</label>
+                <Textarea
+                  className="min-h-56 font-mono"
+                  value={aiEditorMapText}
+                  onChange={(e) => setAiEditorMapText(e.target.value)}
+                />
+                <p className="text-xs text-zinc-500">
+                  Example format:{" "}
+                  <code className="rounded bg-zinc-100 px-1 py-0.5">
+                    {`[{"label":"Maize","keywords":["corn","maize"]}]`}
+                  </code>{" "}
+                  (keywords match MobileNet raw labels)
+                </p>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant="outline"
+                  type="button"
+                  onClick={() => {
+                    setAiEditorThreshold(aiSettings.aiThreshold ?? DEFAULT_AI_SETTINGS.aiThreshold);
+                    setAiEditorMapText(JSON.stringify(aiSettings.cropMap ?? DEFAULT_AI_SETTINGS.cropMap, null, 2));
+                  }}
+                >
+                  Reset editor
+                </Button>
+                <Button
+                  type="button"
+                  disabled={busy}
+                  onClick={() =>
+                    runAction(async () => {
+                      let parsed;
+                      try {
+                        parsed = JSON.parse(aiEditorMapText);
+                      } catch {
+                        throw new Error("Invalid JSON for crop mapping.");
+                      }
+                      const saved = await apiRequest("/api/settings/ai", {
+                        method: "PUT",
+                        body: JSON.stringify({
+                          aiThreshold: Number(aiEditorThreshold),
+                          cropMap: parsed,
+                        }),
+                      });
+                      const nextAi = saved?.data || DEFAULT_AI_SETTINGS;
+                      setAiSettings(nextAi);
+                      setAiEditorThreshold(nextAi.aiThreshold ?? DEFAULT_AI_SETTINGS.aiThreshold);
+                      setAiEditorMapText(JSON.stringify(nextAi.cropMap ?? DEFAULT_AI_SETTINGS.cropMap, null, 2));
+                    })
+                  }
+                >
+                  Save AI settings
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
         </section>
       ) : null}
 
