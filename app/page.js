@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { addToCart, getCart } from "@/lib/cart";
 
 const features = [
   "AI-assisted crop detection with review workflow",
@@ -16,24 +17,20 @@ const features = [
 ];
 
 export default function LandingPage() {
-  const [crops, setCrops] = useState([]);
+  const [products, setProducts] = useState([]);
+  const [cartCount, setCartCount] = useState(0);
 
   useEffect(() => {
-    // Only show "your crops" when logged in.
-    fetch("/api/auth/me")
-      .then((res) => (res.ok ? res.json() : null))
-      .then((me) => {
-        if (!me?.user) return;
-        return fetch("/api/crops").then((r) => (r.ok ? r.json() : null));
-      })
-      .then((data) => setCrops(data?.data || []))
-      .catch(() => {});
+    queueMicrotask(() => {
+      setCartCount(getCart().items.length);
+      fetch("/api/products")
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => setProducts(data?.data || []))
+        .catch(() => {});
+    });
   }, []);
 
-  const cropsWithImages = useMemo(
-    () => crops.filter((c) => c?.imageUrl).slice(0, 12),
-    [crops]
-  );
+  const featuredProducts = useMemo(() => products.slice(0, 12), [products]);
 
   return (
     <main className="min-h-screen bg-gradient-to-b from-emerald-50 via-white to-cyan-50">
@@ -43,11 +40,11 @@ export default function LandingPage() {
           <h1 className="text-xl font-bold text-emerald-900">AgricMS</h1>
         </div>
         <div className="flex items-center gap-2">
-          <Link href="/auth">
-            <Button variant="outline">Login</Button>
+          <Link href="/cart">
+            <Button variant="outline">Cart ({cartCount})</Button>
           </Link>
           <Link href="/auth">
-            <Button>Get Started</Button>
+            <Button variant="outline">Login</Button>
           </Link>
         </div>
       </header>
@@ -67,8 +64,13 @@ export default function LandingPage() {
             Manage your agricultural operations with a modern, responsive system designed for both office and field usage.
           </p>
           <div className="flex flex-wrap gap-3">
-            <Link href="/auth">
-              <Button size="lg">Launch Platform</Button>
+            <Link href="/dashboard">
+              <Button size="lg">Open Dashboard</Button>
+            </Link>
+            <Link href="#shop">
+              <Button variant="outline" size="lg">
+                Shop Products
+              </Button>
             </Link>
             <a href="#features">
               <Button variant="outline" size="lg">View Features</Button>
@@ -98,33 +100,45 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {cropsWithImages.length ? (
-        <section className="mx-auto w-full max-w-7xl px-4 pb-10 sm:px-8">
-          <h3 className="mb-4 text-2xl font-bold text-zinc-900">Your recent crops</h3>
-          <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
-            {cropsWithImages.map((crop) => (
-              <Card key={crop._id} className="overflow-hidden">
-                <CardContent className="p-0">
-                  <Image
-                    src={crop.imageUrl}
-                    alt={crop.name}
-                    width={800}
-                    height={600}
-                    unoptimized
-                    className="h-44 w-full object-cover"
-                  />
-                  <div className="space-y-1 p-4">
-                    <p className="font-semibold text-zinc-900">{crop.name}</p>
-                    <p className="text-sm text-zinc-600">
-                      Qty: {crop.quantity} · ${crop.unitPrice}
-                    </p>
+      <section id="shop" className="mx-auto w-full max-w-7xl px-4 pb-10 sm:px-8">
+        <h3 className="mb-4 text-2xl font-bold text-zinc-900">Shop farm products</h3>
+        <p className="mb-6 text-zinc-600">Add items to cart first. You’ll only be asked to sign in at checkout.</p>
+        <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
+          {featuredProducts.map((p) => (
+            <Card key={p._id} className="overflow-hidden">
+              <CardContent className="p-0">
+                <Image
+                  src={p.imageUrl || "/demo/crop-demo.svg"}
+                  alt={p.name}
+                  width={800}
+                  height={600}
+                  className="h-44 w-full object-cover"
+                />
+                <div className="space-y-2 p-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="font-semibold text-zinc-900">{p.name}</p>
+                    <Badge className="bg-zinc-100 text-zinc-800">{p.category || "General"}</Badge>
                   </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        </section>
-      ) : null}
+                  <p className="text-sm text-zinc-600 line-clamp-2">{p.description || "Farm fresh product."}</p>
+                  <div className="flex items-center justify-between">
+                    <p className="font-bold text-emerald-800">${Number(p.price).toFixed(2)}</p>
+                    <Button
+                      size="sm"
+                      onClick={() => {
+                        addToCart(p, 1);
+                        setCartCount(getCart().items.length);
+                      }}
+                      disabled={p.stock <= 0}
+                    >
+                      {p.stock <= 0 ? "Out of stock" : "Add to cart"}
+                    </Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      </section>
 
       <section className="mx-auto grid w-full max-w-7xl gap-4 px-4 pb-16 sm:px-8 sm:pb-20 md:grid-cols-3 lg:grid-cols-4">
         <Image src="/demo/crop-demo.svg" alt="Crop module" width={600} height={450} className="h-full w-full rounded-xl border border-zinc-200 bg-white p-2 shadow-sm" />

@@ -4,12 +4,24 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { motion } from "framer-motion";
+import { Line } from "react-chartjs-2";
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  Tooltip,
+  Legend,
+} from "chart.js";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
+
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend);
 
 const DEFAULT_AI_SETTINGS = {
   aiThreshold: 75,
@@ -44,6 +56,7 @@ export default function DashboardPage() {
   const [crops, setCrops] = useState([]);
   const [statements, setStatements] = useState([]);
   const [users, setUsers] = useState([]);
+  const [salesSummary, setSalesSummary] = useState({ totals: { orders: 0, revenue: 0, paid: 0, cod: 0 }, series: [] });
   const [summary, setSummary] = useState({ income: 0, expense: 0, net: 0 });
   const [cropForm, setCropForm] = useState(emptyCrop);
   const [statementForm, setStatementForm] = useState(emptyStatement);
@@ -77,6 +90,49 @@ export default function DashboardPage() {
   const lowStockCrops = useMemo(() => crops.filter((crop) => Number(crop.quantity) < 100), [crops]);
   const pendingReviewCrops = useMemo(() => crops.filter((crop) => crop.detectionStatus === "needs_review"), [crops]);
 
+  const salesChartData = useMemo(() => {
+    const series = salesSummary?.series || [];
+    const labels = series.map((s) => s.day);
+    const revenue = series.map((s) => Number(s.revenue || 0));
+    const orders = series.map((s) => Number(s.orders || 0));
+    return {
+      labels,
+      datasets: [
+        {
+          label: "Revenue",
+          data: revenue,
+          borderColor: "#059669",
+          backgroundColor: "rgba(5, 150, 105, 0.12)",
+          tension: 0.3,
+          yAxisID: "y",
+        },
+        {
+          label: "Orders",
+          data: orders,
+          borderColor: "#4f46e5",
+          backgroundColor: "rgba(79, 70, 229, 0.12)",
+          tension: 0.3,
+          yAxisID: "y1",
+        },
+      ],
+    };
+  }, [salesSummary]);
+
+  const salesChartOptions = useMemo(
+    () => ({
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { position: "bottom" },
+      },
+      scales: {
+        y: { type: "linear", position: "left" },
+        y1: { type: "linear", position: "right", grid: { drawOnChartArea: false } },
+      },
+    }),
+    []
+  );
+
   const apiRequest = useCallback(async (url, options = {}) => {
     const res = await fetch(url, { ...options, headers: { "Content-Type": "application/json", ...(options.headers || {}) } });
     const data = await res.json();
@@ -95,14 +151,16 @@ export default function DashboardPage() {
       fetch("/api/crops").then((r) => r.json()),
       fetch("/api/statements").then((r) => r.json()),
       fetch("/api/settings/ai").then((r) => r.json()),
+      fetch("/api/orders/summary").then((r) => r.json()),
     ];
     if (currentUser.user.role === "admin" || currentUser.user.role === "manager") requests.push(fetch("/api/users").then((r) => r.json()));
-    const [cropRes, statementRes, aiRes, userRes] = await Promise.all(requests);
+    const [cropRes, statementRes, aiRes, salesRes, userRes] = await Promise.all(requests);
 
     setCrops(cropRes.data || []);
     setStatements(statementRes.data || []);
     setSummary(statementRes.summary || { income: 0, expense: 0, net: 0 });
     setUsers(userRes?.data || []);
+    setSalesSummary(salesRes || { totals: { orders: 0, revenue: 0, paid: 0, cod: 0 }, series: [] });
     const nextAi = aiRes?.data || DEFAULT_AI_SETTINGS;
     setAiSettings(nextAi);
     setAiEditorThreshold(nextAi.aiThreshold ?? DEFAULT_AI_SETTINGS.aiThreshold);
@@ -302,7 +360,24 @@ export default function DashboardPage() {
       <section className="grid gap-4 lg:grid-cols-3">
         <Card><CardHeader><CardTitle>Low Stock Alerts</CardTitle></CardHeader><CardContent>{lowStockCrops.length ? lowStockCrops.map((crop) => <p key={crop._id} className="text-sm text-amber-700">{crop.name}: {crop.quantity} units</p>) : <p className="text-sm text-zinc-600">No low-stock records.</p>}</CardContent></Card>
         <Card><CardHeader><CardTitle>AI Review Queue</CardTitle></CardHeader><CardContent>{pendingReviewCrops.length ? pendingReviewCrops.map((crop) => <div key={crop._id} className="mb-2 rounded-md bg-amber-50 p-2 text-sm"><p className="font-medium">{crop.name}</p><p className="text-zinc-600">{crop.detectionLabel || crop.detectionRawLabel} ({crop.detectionConfidence || 0}%)</p><div className="mt-2 flex gap-2"><Button size="sm" onClick={() => markCropReview(crop._id, "accepted")}>Accept</Button><Button size="sm" variant="outline" onClick={() => markCropReview(crop._id, "needs_review")}>Keep Review</Button></div></div>) : <p className="text-sm text-zinc-600">No pending review items.</p>}</CardContent></Card>
-        <Card><CardHeader><CardTitle>Health</CardTitle></CardHeader><CardContent><p className="text-sm text-zinc-600">Deployment monitor endpoint: <code>/api/health</code></p></CardContent></Card>
+        <Card>
+          <CardHeader><CardTitle>Sales Overview</CardTitle></CardHeader>
+          <CardContent className="space-y-2">
+            <div className="grid grid-cols-2 gap-2">
+              <div className="rounded-md bg-zinc-50 p-2">
+                <p className="text-xs text-zinc-600">Orders</p>
+                <p className="text-lg font-bold">{salesSummary?.totals?.orders || 0}</p>
+              </div>
+              <div className="rounded-md bg-zinc-50 p-2">
+                <p className="text-xs text-zinc-600">Revenue</p>
+                <p className="text-lg font-bold">${Number(salesSummary?.totals?.revenue || 0).toFixed(2)}</p>
+              </div>
+            </div>
+            <div className="h-48">
+              <Line data={salesChartData} options={salesChartOptions} />
+            </div>
+          </CardContent>
+        </Card>
       </section>
 
       <section className="grid gap-6 lg:grid-cols-2">

@@ -14,6 +14,7 @@ const initialLogin = { email: "", password: "" };
 
 export default function AuthPage() {
   const router = useRouter();
+  const [returnTo, setReturnTo] = useState("/dashboard");
   const [tab, setTab] = useState("login");
   const [loginForm, setLoginForm] = useState(initialLogin);
   const [registerForm, setRegisterForm] = useState(initialRegister);
@@ -21,13 +22,20 @@ export default function AuthPage() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    fetch("/api/auth/me")
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (data?.user) router.push("/dashboard");
-      })
-      .catch(() => {});
-  }, [router]);
+    queueMicrotask(() => {
+      try {
+        const url = new URL(window.location.href);
+        const next = url.searchParams.get("returnTo");
+        if (next) setReturnTo(next);
+      } catch {}
+      fetch("/api/auth/me")
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (data?.user) router.push(returnTo);
+        })
+        .catch(() => {});
+    });
+  }, [router, returnTo]);
 
   async function submitForm(endpoint, payload) {
     setLoading(true);
@@ -40,7 +48,7 @@ export default function AuthPage() {
       });
       const data = await res.json();
       if (!res.ok) return setMessage(data.message || "Request failed.");
-      router.push("/dashboard");
+      router.push(returnTo);
     } catch {
       setMessage("Network error.");
     } finally {

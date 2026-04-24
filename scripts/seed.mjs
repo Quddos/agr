@@ -44,6 +44,20 @@ const statementSchema = new mongoose.Schema(
 const User = mongoose.models.User || mongoose.model("User", userSchema);
 const Crop = mongoose.models.Crop || mongoose.model("Crop", cropSchema);
 const Statement = mongoose.models.Statement || mongoose.model("Statement", statementSchema);
+const productSchema = new mongoose.Schema(
+  {
+    name: { type: String, required: true, trim: true },
+    category: { type: String, default: "General", trim: true },
+    description: { type: String, default: "" },
+    price: { type: Number, required: true, min: 0 },
+    stock: { type: Number, required: true, min: 0 },
+    imageUrl: { type: String, default: "" },
+    isActive: { type: Boolean, default: true },
+  },
+  { timestamps: true }
+);
+const Product =
+  mongoose.models.Product || mongoose.model("Product", productSchema);
 
 async function seed() {
   await mongoose.connect(MONGODB_URI, { dbName: "agric_management" });
@@ -130,6 +144,55 @@ async function seed() {
     console.log(`Inserted ${statements.length} sample statements.`);
   } else {
     console.log("Statements already seeded, skipping sample statements.");
+  }
+
+  const productCount = await Product.countDocuments();
+  if (productCount === 0) {
+    const products = await Product.insertMany([
+      {
+        name: "Fresh Maize (Bag)",
+        category: "Cereal",
+        description: "Clean, dried maize bag for household and bulk buyers.",
+        price: 22.5,
+        stock: 50,
+        imageUrl:
+          "https://images.unsplash.com/photo-1531177071276-99f171b40c8b?auto=format&fit=crop&w=1200&q=80",
+        isActive: true,
+      },
+      {
+        name: "Tomatoes (Crate)",
+        category: "Vegetable",
+        description: "Fresh farm tomatoes crate, sorted and ready for market.",
+        price: 18.0,
+        stock: 30,
+        imageUrl:
+          "https://images.unsplash.com/photo-1568584711075-3d021a7c3ca3?auto=format&fit=crop&w=1200&q=80",
+        isActive: true,
+      },
+      {
+        name: "Cassava Tubers (Bundle)",
+        category: "Root",
+        description: "Healthy cassava tubers bundle, great for processing.",
+        price: 12.0,
+        stock: 40,
+        imageUrl:
+          "https://images.unsplash.com/photo-1596638787647-904d822d751e?auto=format&fit=crop&w=1200&q=80",
+        isActive: true,
+      },
+      {
+        name: "Rice (10kg)",
+        category: "Cereal",
+        description: "Locally sourced rice pack for everyday cooking.",
+        price: 16.75,
+        stock: 80,
+        imageUrl:
+          "https://images.unsplash.com/photo-1604909052743-94e838986d24?auto=format&fit=crop&w=1200&q=80",
+        isActive: true,
+      },
+    ]);
+    console.log(`Inserted ${products.length} demo products.`);
+  } else {
+    console.log("Products already seeded, skipping demo products.");
   }
 
   console.log("Seed completed.");
