@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { clearCart, getCart, updateCartItem, cartTotals } from "@/lib/cart";
+import { formatINR } from "@/lib/money";
 
 export default function CartPage() {
   const [cart, setCart] = useState({ items: [] });
@@ -42,7 +43,7 @@ export default function CartPage() {
                   <Image src={i.imageUrl || "/demo/crop-demo.svg"} alt={i.name} width={64} height={64} className="h-16 w-16 rounded-md object-cover" />
                   <div>
                     <p className="font-semibold">{i.name}</p>
-                    <p className="text-sm text-zinc-600">${Number(i.price).toFixed(2)}</p>
+                    <p className="text-sm text-zinc-600">{formatINR(i.price)}</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -57,7 +58,7 @@ export default function CartPage() {
                       setCart(next);
                     }}
                   />
-                  <p className="w-24 text-right font-semibold">${(i.price * i.quantity).toFixed(2)}</p>
+                  <p className="w-24 text-right font-semibold">{formatINR(i.price * i.quantity)}</p>
                 </div>
               </div>
             ))
@@ -72,11 +73,11 @@ export default function CartPage() {
         <CardContent className="space-y-3">
           <div className="flex items-center justify-between">
             <p className="text-zinc-600">Subtotal</p>
-            <p className="font-bold">${totals.subtotal.toFixed(2)}</p>
+            <p className="font-bold">{formatINR(totals.subtotal)}</p>
           </div>
           <div className="flex items-center justify-between">
             <p className="text-zinc-600">Total</p>
-            <p className="text-xl font-extrabold">${totals.total.toFixed(2)}</p>
+            <p className="text-xl font-extrabold">{formatINR(totals.total)}</p>
           </div>
           <div className="flex flex-wrap gap-2">
             <Button
@@ -93,7 +94,7 @@ export default function CartPage() {
             </Link>
           </div>
           <p className="text-xs text-zinc-500">
-            You can shop freely. Sign in/up is required only at checkout.
+            You can shop freely. Sign in/up is required only when you click Pay/Place order.
           </p>
         </CardContent>
       </Card>

@@ -12,7 +12,9 @@ export async function GET() {
 export async function POST(request) {
   const { error, user } = requireAuth(request);
   if (error) return error;
-  if (user.role !== "admin") return forbiddenResponse("Only admin can create products.");
+  if (user.role !== "admin" && user.role !== "manager") {
+    return forbiddenResponse("Only admin or manager can create products.");
+  }
 
   try {
     const body = await request.json();

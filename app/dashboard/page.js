@@ -20,6 +20,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Select } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
+import { formatINR } from "@/lib/money";
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Legend);
 
@@ -58,6 +59,8 @@ export default function DashboardPage() {
   const [users, setUsers] = useState([]);
   const [salesSummary, setSalesSummary] = useState({ totals: { orders: 0, revenue: 0, paid: 0, cod: 0 }, series: [] });
   const [summary, setSummary] = useState({ income: 0, expense: 0, net: 0 });
+  const [productForm, setProductForm] = useState({ name: "", category: "General", description: "", price: "", stock: "", imageUrl: "" });
+  const [orders, setOrders] = useState([]);
   const [cropForm, setCropForm] = useState(emptyCrop);
   const [statementForm, setStatementForm] = useState(emptyStatement);
   const [userForm, setUserForm] = useState(emptyUser);
@@ -152,15 +155,17 @@ export default function DashboardPage() {
       fetch("/api/statements").then((r) => r.json()),
       fetch("/api/settings/ai").then((r) => r.json()),
       fetch("/api/orders/summary").then((r) => r.json()),
+      fetch("/api/orders").then((r) => r.json()),
     ];
     if (currentUser.user.role === "admin" || currentUser.user.role === "manager") requests.push(fetch("/api/users").then((r) => r.json()));
-    const [cropRes, statementRes, aiRes, salesRes, userRes] = await Promise.all(requests);
+    const [cropRes, statementRes, aiRes, salesRes, ordersRes, userRes] = await Promise.all(requests);
 
     setCrops(cropRes.data || []);
     setStatements(statementRes.data || []);
     setSummary(statementRes.summary || { income: 0, expense: 0, net: 0 });
     setUsers(userRes?.data || []);
     setSalesSummary(salesRes || { totals: { orders: 0, revenue: 0, paid: 0, cod: 0 }, series: [] });
+    setOrders(ordersRes?.data || []);
     const nextAi = aiRes?.data || DEFAULT_AI_SETTINGS;
     setAiSettings(nextAi);
     setAiEditorThreshold(nextAi.aiThreshold ?? DEFAULT_AI_SETTINGS.aiThreshold);
@@ -328,6 +333,27 @@ export default function DashboardPage() {
     URL.revokeObjectURL(url);
   }
 
+  async function createProduct(e) {
+    e.preventDefault();
+    await runAction(async () => {
+      await apiRequest("/api/products", {
+        method: "POST",
+        body: JSON.stringify({
+          ...productForm,
+          price: Number(productForm.price),
+          stock: Number(productForm.stock),
+        }),
+      });
+      setProductForm({ name: "", category: "General", description: "", price: "", stock: "", imageUrl: "" });
+    });
+  }
+
+  async function updateOrder(id, patch) {
+    await runAction(() =>
+      apiRequest(`/api/orders/${id}`, { method: "PATCH", body: JSON.stringify(patch) })
+    );
+  }
+
   async function logout() {
     await fetch("/api/auth/logout", { method: "POST" });
     router.push("/auth");
@@ -352,9 +378,9 @@ export default function DashboardPage() {
 
       <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <MetricCard label="Total Crops" value={crops.length} />
-        <MetricCard label="Inventory Value" value={`$${cropInventoryValue.toFixed(2)}`} />
-        <MetricCard label="Income" value={`$${summary.income.toFixed(2)}`} />
-        <MetricCard label="Net Balance" value={`$${summary.net.toFixed(2)}`} />
+        <MetricCard label="Inventory Value" value={formatINR(cropInventoryValue)} />
+        <MetricCard label="Income" value={formatINR(summary.income)} />
+        <MetricCard label="Net Balance" value={formatINR(summary.net)} />
       </section>
 
       <section className="grid gap-4 lg:grid-cols-3">
@@ -370,7 +396,7 @@ export default function DashboardPage() {
               </div>
               <div className="rounded-md bg-zinc-50 p-2">
                 <p className="text-xs text-zinc-600">Revenue</p>
-                <p className="text-lg font-bold">${Number(salesSummary?.totals?.revenue || 0).toFixed(2)}</p>
+                <p className="text-lg font-bold">{formatINR(salesSummary?.totals?.revenue || 0)}</p>
               </div>
             </div>
             <div className="h-48">
@@ -414,7 +440,7 @@ export default function DashboardPage() {
                     {item.imageUrl ? <Image src={item.imageUrl} alt={item.name} width={52} height={52} unoptimized className="rounded-md object-cover" /> : null}
                     <div>
                       <p className="font-medium">{item.name}</p>
-                      <p className="text-xs text-zinc-600">{item.category} | Qty: {item.quantity} | ${item.unitPrice}</p>
+                      <p className="text-xs text-zinc-600">{item.category} | Qty: {item.quantity} | {formatINR(item.unitPrice)}</p>
                       {item.detectionStatus ? <Badge className="mt-1">{item.detectionStatus}</Badge> : null}
                     </div>
                   </div>
@@ -578,6 +604,58 @@ export default function DashboardPage() {
                   Save AI settings
                 </Button>
               </div>
+            </CardContent>
+          </Card>
+        </section>
+      ) : null}
+
+      {(user.role === "admin" || user.role === "manager") ? (
+        <section className="grid gap-6 xl:grid-cols-2">
+          <Card>
+            <CardHeader><CardTitle>Inventory: Add Product</CardTitle></CardHeader>
+            <CardContent>
+              <form className="space-y-3" onSubmit={createProduct}>
+                <Input placeholder="Product name" value={productForm.name} onChange={(e) => setProductForm({ ...productForm, name: e.target.value })} required />
+                <Input placeholder="Category" value={productForm.category} onChange={(e) => setProductForm({ ...productForm, category: e.target.value })} />
+                <Textarea placeholder="Description" value={productForm.description} onChange={(e) => setProductForm({ ...productForm, description: e.target.value })} />
+                <div className="grid grid-cols-2 gap-3">
+                  <Input type="number" min="0" placeholder="Price (INR)" value={productForm.price} onChange={(e) => setProductForm({ ...productForm, price: e.target.value })} required />
+                  <Input type="number" min="0" placeholder="Stock" value={productForm.stock} onChange={(e) => setProductForm({ ...productForm, stock: e.target.value })} required />
+                </div>
+                <Input placeholder="Image URL (optional)" value={productForm.imageUrl} onChange={(e) => setProductForm({ ...productForm, imageUrl: e.target.value })} />
+                <Button disabled={busy}>Create product</Button>
+                <p className="text-xs text-zinc-500">New products appear on the landing shop automatically.</p>
+              </form>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader><CardTitle>Orders: Update delivery/payment</CardTitle></CardHeader>
+            <CardContent className="space-y-2">
+              {orders.slice(0, 8).map((o) => (
+                <div key={o._id} className="rounded-md border border-zinc-200 p-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="font-medium">#{String(o._id).slice(-6).toUpperCase()}</p>
+                    <p className="text-sm font-semibold">{formatINR(o.total)}</p>
+                  </div>
+                  <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                    <Select value={o.orderStatus} onChange={(e) => updateOrder(o._id, { orderStatus: e.target.value })}>
+                      <option value="placed">placed</option>
+                      <option value="processing">processing</option>
+                      <option value="delivered">delivered</option>
+                      <option value="cancelled">cancelled</option>
+                    </Select>
+                    <Select value={o.paymentStatus} onChange={(e) => updateOrder(o._id, { paymentStatus: e.target.value })}>
+                      <option value="pending">pending</option>
+                      <option value="paid">paid</option>
+                    </Select>
+                  </div>
+                  <p className="mt-2 text-xs text-zinc-500">
+                    Buyer: {o.shipping?.fullName || "N/A"} · {o.shipping?.phone || ""}
+                  </p>
+                </div>
+              ))}
+              <p className="text-xs text-zinc-500">Buyers can track updates in `My Orders`.</p>
             </CardContent>
           </Card>
         </section>

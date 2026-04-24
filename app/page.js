@@ -8,6 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { addToCart, getCart } from "@/lib/cart";
+import { formatINR } from "@/lib/money";
 
 const features = [
   "AI-assisted crop detection with review workflow",
@@ -102,36 +103,48 @@ export default function LandingPage() {
 
       <section id="shop" className="mx-auto w-full max-w-7xl px-4 pb-10 sm:px-8">
         <h3 className="mb-4 text-2xl font-bold text-zinc-900">Shop farm products</h3>
-        <p className="mb-6 text-zinc-600">Add items to cart first. You’ll only be asked to sign in at checkout.</p>
+        <p className="mb-6 text-zinc-600">Browse freely. You’ll only be asked to sign in when you click Pay.</p>
         <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
           {featuredProducts.map((p) => (
             <Card key={p._id} className="overflow-hidden">
               <CardContent className="p-0">
-                <Image
-                  src={p.imageUrl || "/demo/crop-demo.svg"}
-                  alt={p.name}
-                  width={800}
-                  height={600}
-                  className="h-44 w-full object-cover"
-                />
+                <Link href={`/products/${p._id}`}>
+                  <Image
+                    src={p.imageUrl || "/demo/crop-demo.svg"}
+                    alt={p.name}
+                    width={800}
+                    height={600}
+                    className="h-44 w-full object-cover"
+                  />
+                </Link>
                 <div className="space-y-2 p-4">
                   <div className="flex items-center justify-between gap-2">
-                    <p className="font-semibold text-zinc-900">{p.name}</p>
+                    <Link href={`/products/${p._id}`} className="font-semibold text-zinc-900 hover:underline">
+                      {p.name}
+                    </Link>
                     <Badge className="bg-zinc-100 text-zinc-800">{p.category || "General"}</Badge>
                   </div>
                   <p className="text-sm text-zinc-600 line-clamp-2">{p.description || "Farm fresh product."}</p>
                   <div className="flex items-center justify-between">
-                    <p className="font-bold text-emerald-800">${Number(p.price).toFixed(2)}</p>
-                    <Button
-                      size="sm"
-                      onClick={() => {
-                        addToCart(p, 1);
-                        setCartCount(getCart().items.length);
-                      }}
-                      disabled={p.stock <= 0}
-                    >
-                      {p.stock <= 0 ? "Out of stock" : "Add to cart"}
-                    </Button>
+                    <p className="font-bold text-emerald-800">{formatINR(p.price)}</p>
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          addToCart(p, 1);
+                          setCartCount(getCart().items.length);
+                        }}
+                        disabled={p.stock <= 0}
+                      >
+                        Add
+                      </Button>
+                      <Link href={`/checkout?buyNow=${p._id}`}>
+                        <Button size="sm" disabled={p.stock <= 0}>
+                          Buy
+                        </Button>
+                      </Link>
+                    </div>
                   </div>
                 </div>
               </CardContent>

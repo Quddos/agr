@@ -8,8 +8,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { clearCart, getCart, cartTotals } from "@/lib/cart";
+import { formatINR } from "@/lib/money";
 
 const emptyShipping = { fullName: "", phone: "", address: "", city: "" };
+const CHECKOUT_DRAFT_KEY = "agr_checkout_draft_v1";
 
 export default function CheckoutPage() {
   const router = useRouter();
@@ -18,27 +20,57 @@ export default function CheckoutPage() {
   const [paymentMethod, setPaymentMethod] = useState("cod");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [buyNowId, setBuyNowId] = useState("");
 
   useEffect(() => {
     queueMicrotask(() => {
+      try {
+        const url = new URL(window.location.href);
+        const id = url.searchParams.get("buyNow");
+        if (id) setBuyNowId(id);
+      } catch {}
+
+      // Load draft if user was redirected to login.
+      try {
+        const raw = localStorage.getItem(CHECKOUT_DRAFT_KEY);
+        if (raw) {
+          const draft = JSON.parse(raw);
+          setShipping(draft.shipping || emptyShipping);
+          setPaymentMethod(draft.paymentMethod || "cod");
+        }
+      } catch {}
+
       setCart(getCart());
-      fetch("/api/auth/me").then(async (res) => {
-        if (!res.ok) router.push("/auth?returnTo=/checkout");
-      });
     });
   }, [router]);
 
-  const totals = useMemo(() => cartTotals(cart), [cart]);
+  const effectiveItems = useMemo(() => {
+    if (!buyNowId) return cart.items;
+    const item = cart.items.find((i) => i.productId === buyNowId);
+    return item ? [item] : [];
+  }, [buyNowId, cart.items]);
+  const effectiveTotals = useMemo(() => cartTotals({ items: effectiveItems }), [effectiveItems]);
 
   async function placeOrder() {
     setBusy(true);
     setMessage("");
     try {
+      // Require auth only when paying/placing order.
+      const me = await fetch("/api/auth/me");
+      if (!me.ok) {
+        localStorage.setItem(
+          CHECKOUT_DRAFT_KEY,
+          JSON.stringify({ shipping, paymentMethod })
+        );
+        router.push("/auth?returnTo=/checkout");
+        return;
+      }
+
       const res = await fetch("/api/orders", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          items: cart.items,
+          items: effectiveItems,
           shipping,
           paymentMethod,
         }),
@@ -47,8 +79,9 @@ export default function CheckoutPage() {
       if (!res.ok) throw new Error(data.message || "Checkout failed.");
       clearCart();
       setCart(getCart());
+      localStorage.removeItem(CHECKOUT_DRAFT_KEY);
       setMessage("Order placed successfully. Check dashboard for sales updates.");
-      router.push("/dashboard");
+      router.push("/orders");
     } catch (e) {
       setMessage(e.message || "Checkout failed.");
     } finally {
@@ -90,7 +123,7 @@ export default function CheckoutPage() {
           </Select>
           <div className="flex items-center justify-between">
             <p className="text-zinc-600">Total</p>
-            <p className="text-xl font-extrabold">${totals.total.toFixed(2)}</p>
+            <p className="text-xl font-extrabold">{formatINR(effectiveTotals.total)}</p>
           </div>
           {paymentMethod === "online" ? (
             <Button
@@ -102,7 +135,7 @@ export default function CheckoutPage() {
             </Button>
           ) : null}
           <Button
-            disabled={busy || cart.items.length === 0 || !shipping.fullName || !shipping.phone || !shipping.address}
+            disabled={busy || effectiveItems.length === 0 || !shipping.fullName || !shipping.phone || !shipping.address}
             onClick={placeOrder}
           >
             Place order
